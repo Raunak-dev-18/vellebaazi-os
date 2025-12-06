@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Posts collection
+    match /posts/{postId} {
+      // Anyone can read posts
+      allow read: if true;
+      
+      // Only authenticated users can create posts
+      allow create: if request.auth != null;
+      
+      // Only post owner can update/delete their posts
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // Likes collection
+    match /likes/{likeId} {
+      // Anyone can read likes
+      allow read: if true;
+      
+      // Only authenticated users can create/delete likes
+      allow create, delete: if request.auth != null;
+    }
+    
+    // Comments collection
+    match /comments/{commentId} {
+      // Anyone can read comments
+      allow read: if true;
+      
+      // Only authenticated users can create comments
+      allow create: if request.auth != null;
+      
+      // Only comment owner can delete their comments
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+  }
+}

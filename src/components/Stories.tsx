@@ -1,0 +1,523 @@
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Plus, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { getDatabase, ref, get, set, push, remove } from "firebase/database";
+import { uploadToS3 } from "@/lib/supabase";
+import { useToast } from "@/hooks/use-toast";
+import { StoryEditor } from "@/components/StoryEditor";
+
+interface Story {
+  id: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  mediaUrl: string;
+  mediaType: 'image' | 'video';
+  createdAt: number;
+  expiresAt: number;
+}
+
+export function Stories() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [stories, setStories] = useState<{ [userId: string]: Story[] }>({});
+  const [displayedStories, setDisplayedStories] = useState<{ [userId: string]: Story[] }>({});
+  const [displayedCount, setDisplayedCount] = useState(10);
+  const [hasMoreStories, setHasMoreStories] = useState(false);
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [currentStoryUser, setCurrentStoryUser] = useState<string | null>(null);
+  const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+
+  useEffect(() => {
+    fetchStories();
+    // Cleanup expired stories every minute
+    const interval = setInterval(cleanupExpiredStories, 60000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const fetchStories = async () => {
+    if (!user) return;
+
+    try {
+      const db = getDatabase();
+      const storiesRef = ref(db, 'stories');
+      const snapshot = await get(storiesRef);
+
+      if (snapshot.exists()) {
+        const allStories = snapshot.val();
+        const now = Date.now();
+        
+        // Group stories by user and filter expired ones
+        const groupedStories: { [userId: string]: Story[] } = {};
+        
+        Object.entries(allStories).forEach(([storyId, story]: [string, any]) => {
+          if (story.expiresAt > now) {
+            if (!groupedStories[story.userId]) {
+              groupedStories[story.userId] = [];
+            }
+            groupedStories[story.userId].push({
+              id: storyId,
+              ...story
+            });
+          }
+        });
+
+        // Sort stories by creation time
+        Object.keys(groupedStories).forEach(userId => {
+          groupedStories[userId].sort((a, b) => a.createdAt - b.createdAt);
+        });
+
+        setStories(groupedStories);
+        
+        // Display first batch of stories
+        const userIds = Object.keys(groupedStories);
+        const displayedUserIds = userIds.slice(0, displayedCount);
+        const displayed: { [userId: string]: Story[] } = {};
+        displayedUserIds.forEach(userId => {
+          displayed[userId] = groupedStories[userId];
+        });
+        setDisplayedStories(displayed);
+        setHasMoreStories(userIds.length > displayedCount);
+      } else {
+        setStories({});
+        setDisplayedStories({});
+        setHasMoreStories(false);
+      }
+    } catch (error) {
+      console.error("Error fetching stories:", error);
+    }
+  };
+
+  const loadMoreStories = () => {
+    const userIds = Object.keys(stories);
+    const newCount = displayedCount + 10;
+    const displayedUserIds = userIds.slice(0, newCount);
+    const displayed: { [userId: string]: Story[] } = {};
+    displayedUserIds.forEach(userId => {
+      displayed[userId] = stories[userId];
+    });
+    setDisplayedStories(displayed);
+    setDisplayedCount(newCount);
+    setHasMoreStories(userIds.length > newCount);
+  };
+
+  const cleanupExpiredStories = async () => {
+    try {
+      const db = getDatabase();
+      const storiesRef = ref(db, 'stories');
+      const snapshot = await get(storiesRef);
+
+      if (snapshot.exists()) {
+        const allStories = snapshot.val();
+        const now = Date.now();
+
+        Object.entries(allStories).forEach(async ([storyId, story]: [string, any]) => {
+          if (story.expiresAt <= now) {
+            await remove(ref(db, `stories/${storyId}`));
+          }
+        });
+
+        fetchStories();
+      }
+    } catch (error) {
+      console.error("Error cleaning up stories:", error);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'];
+    if (!validTypes.includes(file.type)) {
+      toast({
+        title: "Invalid File Type",
+        description: "Please select an image or video",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Please select a file smaller than 50MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setIsUploadDialogOpen(false);
+    setIsEditorOpen(true);
+  };
+
+  const handleEditorSave = async (editedBlob: Blob) => {
+    if (!user) return;
+
+    setIsUploading(true);
+    setIsEditorOpen(false);
+    
+    try {
+      const db = getDatabase();
+      const fileName = `stories/${user.uid}/${Date.now()}.jpg`;
+
+      // Convert blob to file
+      const editedFile = new File([editedBlob], "story.jpg", { type: "image/jpeg" });
+      const mediaUrl = await uploadToS3(editedFile, fileName);
+
+      const storiesRef = ref(db, 'stories');
+      const newStoryRef = push(storiesRef);
+
+      const now = Date.now();
+      const expiresAt = now + (24 * 60 * 60 * 1000); // 24 hours from now
+
+      await set(newStoryRef, {
+        userId: user.uid,
+        username: user.displayName || user.email?.split('@')[0] || 'user',
+        userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+        mediaUrl,
+        mediaType: 'image',
+        createdAt: now,
+        expiresAt
+      });
+
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      fetchStories();
+
+      toast({
+        title: "Story Posted",
+        description: "Your story will be visible for 24 hours",
+      });
+    } catch (error: any) {
+      console.error("Error uploading story:", error);
+      toast({
+        title: "Error",
+        description: "Failed to upload story",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleEditorCancel = () => {
+    setIsEditorOpen(false);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+  };
+
+  const handleUploadStory = async () => {
+    if (!user || !selectedFile) return;
+
+    // For videos, upload directly without editing
+    if (selectedFile.type.startsWith('video/')) {
+      setIsUploading(true);
+      try {
+        const db = getDatabase();
+        const fileExtension = selectedFile.name.split('.').pop();
+        const fileName = `stories/${user.uid}/${Date.now()}.${fileExtension}`;
+
+        const mediaUrl = await uploadToS3(selectedFile, fileName);
+
+        const storiesRef = ref(db, 'stories');
+        const newStoryRef = push(storiesRef);
+
+        const now = Date.now();
+        const expiresAt = now + (24 * 60 * 60 * 1000);
+
+        await set(newStoryRef, {
+          userId: user.uid,
+          username: user.displayName || user.email?.split('@')[0] || 'user',
+          userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          mediaUrl,
+          mediaType: 'video',
+          createdAt: now,
+          expiresAt
+        });
+
+        setIsUploadDialogOpen(false);
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        fetchStories();
+
+        toast({
+          title: "Story Posted",
+          description: "Your story will be visible for 24 hours",
+        });
+      } catch (error: any) {
+        console.error("Error uploading story:", error);
+        toast({
+          title: "Error",
+          description: "Failed to upload story",
+          variant: "destructive",
+        });
+      } finally {
+        setIsUploading(false);
+      }
+    } else {
+      // For images, open editor
+      setIsUploadDialogOpen(false);
+      setIsEditorOpen(true);
+    }
+  };
+
+  const handleViewStory = (userId: string) => {
+    setCurrentStoryUser(userId);
+    setCurrentStoryIndex(0);
+    setIsViewDialogOpen(true);
+  };
+
+  const handleNextStory = () => {
+    if (!currentStoryUser) return;
+    const userStories = stories[currentStoryUser];
+    
+    if (currentStoryIndex < userStories.length - 1) {
+      setCurrentStoryIndex(prev => prev + 1);
+    } else {
+      // Move to next user's stories
+      const userIds = Object.keys(stories);
+      const currentUserIndex = userIds.indexOf(currentStoryUser);
+      if (currentUserIndex < userIds.length - 1) {
+        const nextUserId = userIds[currentUserIndex + 1];
+        setCurrentStoryUser(nextUserId);
+        setCurrentStoryIndex(0);
+      } else {
+        setIsViewDialogOpen(false);
+      }
+    }
+  };
+
+  const handlePrevStory = () => {
+    if (!currentStoryUser) return;
+    
+    if (currentStoryIndex > 0) {
+      setCurrentStoryIndex(prev => prev - 1);
+    } else {
+      // Move to previous user's stories
+      const userIds = Object.keys(stories);
+      const currentUserIndex = userIds.indexOf(currentStoryUser);
+      if (currentUserIndex > 0) {
+        const prevUserId = userIds[currentUserIndex - 1];
+        setCurrentStoryUser(prevUserId);
+        setCurrentStoryIndex(stories[prevUserId].length - 1);
+      }
+    }
+  };
+
+  const currentStory = currentStoryUser && stories[currentStoryUser]?.[currentStoryIndex];
+  const hasOwnStory = user && stories[user.uid]?.length > 0;
+
+  return (
+    <>
+      <div className="border-b border-border bg-card">
+        <ScrollArea className="w-full whitespace-nowrap">
+          <div className="flex gap-4 p-4">
+            {/* Your Story */}
+            {user && (
+              <div
+                className="flex flex-col items-center gap-1 cursor-pointer group"
+                onClick={() => hasOwnStory ? handleViewStory(user.uid) : setIsUploadDialogOpen(true)}
+              >
+                <div className={`${hasOwnStory ? 'p-[2px] bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 rounded-full' : 'p-[2px] bg-muted rounded-full'}`}>
+                  <div className="p-[3px] bg-background rounded-full relative">
+                    <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
+                      <AvatarImage src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} alt="Your story" />
+                      <AvatarFallback>{user.displayName?.[0] || 'Y'}</AvatarFallback>
+                    </Avatar>
+                    {!hasOwnStory && (
+                      <div className="absolute bottom-0 right-0 bg-blue-500 rounded-full p-1">
+                        <Plus className="h-3 w-3 text-white" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <span className="text-xs max-w-[70px] truncate text-foreground">
+                  Your story
+                </span>
+              </div>
+            )}
+
+            {/* Other Users' Stories */}
+            {Object.entries(displayedStories)
+              .filter(([userId]) => userId !== user?.uid)
+              .map(([userId, userStories]) => {
+                const latestStory = userStories[0];
+                return (
+                  <div
+                    key={userId}
+                    className="flex flex-col items-center gap-1 cursor-pointer group"
+                    onClick={() => handleViewStory(userId)}
+                  >
+                    <div className="p-[2px] bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 rounded-full">
+                      <div className="p-[3px] bg-background rounded-full">
+                        <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
+                          <AvatarImage src={latestStory.userAvatar} alt={latestStory.username} />
+                          <AvatarFallback>{latestStory.username[0].toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                      </div>
+                    </div>
+                    <span className="text-xs max-w-[70px] truncate text-foreground">
+                      {latestStory.username}
+                    </span>
+                  </div>
+                );
+              })}
+            
+            {/* Load More Stories Button */}
+            {hasMoreStories && (
+              <div
+                className="flex flex-col items-center gap-1 cursor-pointer group"
+                onClick={loadMoreStories}
+              >
+                <div className="p-[2px] bg-muted rounded-full">
+                  <div className="p-[3px] bg-background rounded-full">
+                    <div className="h-16 w-16 rounded-full bg-secondary flex items-center justify-center transition-transform group-hover:scale-105">
+                      <span className="text-xs font-medium text-muted-foreground">More</span>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground">Load more</span>
+              </div>
+            )}
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
+      </div>
+
+      {/* Upload Story Dialog */}
+      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">Create Story</h2>
+            {!selectedFile ? (
+              <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+                <Input
+                  id="story-upload"
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <label htmlFor="story-upload" className="cursor-pointer">
+                  <div className="flex flex-col items-center gap-2">
+                    <Plus className="h-12 w-12 text-muted-foreground" />
+                    <p className="text-lg font-semibold">Select photo or video</p>
+                    <p className="text-sm text-muted-foreground">
+                      Story will be visible for 24 hours
+                    </p>
+                    <Button type="button" variant="default" className="mt-2">
+                      Choose File
+                    </Button>
+                  </div>
+                </label>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="relative aspect-[9/16] max-h-[500px] bg-muted rounded-lg overflow-hidden">
+                  {selectedFile.type.startsWith('video/') ? (
+                    <video src={previewUrl || ''} controls className="w-full h-full object-cover" />
+                  ) : (
+                    <img src={previewUrl || ''} alt="Preview" className="w-full h-full object-cover" />
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => { setSelectedFile(null); setPreviewUrl(null); }} className="flex-1">
+                    Change
+                  </Button>
+                  <Button onClick={handleUploadStory} disabled={isUploading} className="flex-1">
+                    {isUploading ? "Uploading..." : "Share Story"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Story Dialog */}
+      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+        <DialogContent className="sm:max-w-[500px] p-0 bg-black">
+          {currentStory && (
+            <div className="relative aspect-[9/16] max-h-[90vh]">
+              {/* Story Progress Bars */}
+              <div className="absolute top-2 left-2 right-2 flex gap-1 z-10">
+                {currentStoryUser && stories[currentStoryUser].map((_, index) => (
+                  <div key={index} className="flex-1 h-1 bg-white/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full bg-white transition-all ${index === currentStoryIndex ? 'w-full' : index < currentStoryIndex ? 'w-full' : 'w-0'}`}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* User Info */}
+              <div className="absolute top-6 left-4 right-4 flex items-center gap-2 z-10">
+                <Avatar className="h-10 w-10 border-2 border-white">
+                  <AvatarImage src={currentStory.userAvatar} />
+                  <AvatarFallback>{currentStory.username[0]}</AvatarFallback>
+                </Avatar>
+                <span className="text-white font-semibold">{currentStory.username}</span>
+                <span className="text-white/70 text-sm ml-auto">
+                  {Math.floor((Date.now() - currentStory.createdAt) / 3600000)}h ago
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-white hover:bg-white/20"
+                  onClick={() => setIsViewDialogOpen(false)}
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+
+              {/* Story Media */}
+              {currentStory.mediaType === 'video' ? (
+                <video src={currentStory.mediaUrl} className="w-full h-full object-contain" autoPlay />
+              ) : (
+                <img src={currentStory.mediaUrl} alt="Story" className="w-full h-full object-contain" />
+              )}
+
+              {/* Navigation */}
+              <button
+                onClick={handlePrevStory}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70"
+                disabled={currentStoryIndex === 0 && Object.keys(stories).indexOf(currentStoryUser!) === 0}
+              >
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+              <button
+                onClick={handleNextStory}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70"
+              >
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Story Editor */}
+      {isEditorOpen && selectedFile && previewUrl && (
+        <StoryEditor
+          file={selectedFile}
+          previewUrl={previewUrl}
+          onSave={handleEditorSave}
+          onCancel={handleEditorCancel}
+        />
+      )}
+    </>
+  );
+}

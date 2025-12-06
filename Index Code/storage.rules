@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow authenticated users to upload and read posts
+    match /posts/{userId}/{fileName} {
+      allow read: if true;  // Anyone can read posts
+      allow write: if request.auth != null 
+                   && request.auth.uid == userId
+                   && request.resource.size < 50 * 1024 * 1024  // Max 50MB
+                   && (request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('video/.*'));
+    }
+    
+    // Allow authenticated users to upload and read chat files
+    match /chat-files/{chatId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null 
+                   && request.resource.size < 10 * 1024 * 1024  // Max 10MB
+                   && request.resource.contentType.matches('image/.*|application/pdf|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document|text/plain');
+    }
+    
+    // Deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

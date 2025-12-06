@@ -1,0 +1,9 @@
+const firebaseConfig = {
+  apiKey: "AIzaSyA7FtEMGs69xzvvs6L5VWMLiHpwNfQnmD0",
+  authDomain: "vellebaazi.firebaseapp.com",
+  databaseURL: "https://vellebaazi-default-rtdb.firebaseio.com",
+  projectId: "vellebaazi",
+  storageBucket: "vellebaazi.firebasestorage.app",
+  messagingSenderId: "193001828030",
+  appId: "1:193001828030:web:10eba57000f45b90a838ef"
+};
