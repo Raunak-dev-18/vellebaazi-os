@@ -208,4 +208,15 @@ In any chat conversation, mention `@cognix` to get AI-powered assistance. The as
 
 ## 📄 License
 
-This project is open source and available und
+This project is open source and available under the [MIT License](LICENSE).
+
+## 🙏 Acknowledgments
+
+- [shadcn/ui](https://ui.shadcn.com/) for the beautiful UI components
+- [Radix UI](https://www.radix-ui.com/) for accessible primitives
+- [Lucide Icons](https://lucide.dev/) for the icon set
+- [DiceBear](https://dicebear.com/) for avatar generation
+
+---
+
+Made with ❤️ by the Velle Baazi team
