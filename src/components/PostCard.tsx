@@ -1,13 +1,30 @@
-import { Heart, MessageCircle, Send, Bookmark, Volume2, VolumeX, X } from "lucide-react";
+import {
+  Heart,
+  MessageCircle,
+  Send,
+  Bookmark,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getDatabase, ref, get, set, push, remove, update } from "firebase/database";
+import {
+  getDatabase,
+  ref,
+  get,
+  set,
+  push,
+  remove,
+  update,
+} from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
+import { getSafeAvatarUrl } from "@/utils/media";
 
 interface PostCardProps {
   id: string;
@@ -20,7 +37,16 @@ interface PostCardProps {
   userId: string;
 }
 
-export function PostCard({ id, username, avatar, image, likes: initialLikes, caption, timeAgo, userId }: PostCardProps) {
+export function PostCard({
+  id,
+  username,
+  avatar,
+  image,
+  likes: initialLikes,
+  caption,
+  timeAgo,
+  userId,
+}: PostCardProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -41,10 +67,23 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
   const [commentsDisplayed, setCommentsDisplayed] = useState(5);
   const [hasMoreComments, setHasMoreComments] = useState(false);
   const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
-  const [replyingTo, setReplyingTo] = useState<{ commentId: string; username: string } | null>(null);
-  const [expandedReplies, setExpandedReplies] = useState<Set<string>>(new Set());
+  const [replyingTo, setReplyingTo] = useState<{
+    commentId: string;
+    username: string;
+  } | null>(null);
+  const [expandedReplies, setExpandedReplies] = useState<Set<string>>(
+    new Set(),
+  );
+  const [mediaError, setMediaError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
+
+  const isVideoUrl = (url: string) => {
+    const lower = url.toLowerCase();
+    return lower.includes("video") || /\.(mp4|mov|webm)$/.test(lower);
+  };
+
+  const isBlockedMediaUrl = !image || image.includes("supabase.co/storage");
 
   useEffect(() => {
     checkIfLiked();
@@ -58,18 +97,24 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
       const db = getDatabase();
       const commentsRef = ref(db, `comments/${id}`);
       const snapshot = await get(commentsRef);
-      
+
       if (snapshot.exists()) {
         const liked = new Set<string>();
         const commentsData = snapshot.val();
-        
-        for (const [commentId, comment] of Object.entries(commentsData) as [string, any][]) {
+
+        for (const [commentId, comment] of Object.entries(commentsData) as [
+          string,
+          any,
+        ][]) {
           if (comment.likes && comment.likes[user.uid]) {
             liked.add(commentId);
           }
           // Check replies too
           if (comment.replies) {
-            for (const [replyId, reply] of Object.entries(comment.replies) as [string, any][]) {
+            for (const [replyId, reply] of Object.entries(comment.replies) as [
+              string,
+              any,
+            ][]) {
               if (reply.likes && reply.likes[user.uid]) {
                 liked.add(replyId);
               }
@@ -85,7 +130,7 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
   const checkIfLiked = async () => {
     if (!user) return;
-    
+
     try {
       const db = getDatabase();
       const likesRef = ref(db, `likes/${id}/${user.uid}`);
@@ -101,21 +146,27 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
       const db = getDatabase();
       const commentsRef = ref(db, `comments/${id}`);
       const snapshot = await get(commentsRef);
-      
+
       if (snapshot.exists()) {
         const commentsData = Object.entries(snapshot.val())
           .map(([commentId, comment]: [string, any]) => ({
             id: commentId,
             ...comment,
             likesCount: comment.likes ? Object.keys(comment.likes).length : 0,
-            repliesCount: comment.replies ? Object.keys(comment.replies).length : 0,
-            repliesList: comment.replies ? Object.entries(comment.replies)
-              .map(([replyId, reply]: [string, any]) => ({
-                id: replyId,
-                ...reply,
-                likesCount: reply.likes ? Object.keys(reply.likes).length : 0
-              }))
-              .sort((a: any, b: any) => a.createdAt - b.createdAt) : []
+            repliesCount: comment.replies
+              ? Object.keys(comment.replies).length
+              : 0,
+            repliesList: comment.replies
+              ? Object.entries(comment.replies)
+                  .map(([replyId, reply]: [string, any]) => ({
+                    id: replyId,
+                    ...reply,
+                    likesCount: reply.likes
+                      ? Object.keys(reply.likes).length
+                      : 0,
+                  }))
+                  .sort((a: any, b: any) => a.createdAt - b.createdAt)
+              : [],
           }))
           .sort((a: any, b: any) => b.createdAt - a.createdAt);
         setAllCommentsData(commentsData);
@@ -139,7 +190,11 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
     setHasMoreComments(allCommentsData.length > newCount);
   };
 
-  const handleLikeComment = async (commentId: string, isReply = false, parentCommentId?: string) => {
+  const handleLikeComment = async (
+    commentId: string,
+    isReply = false,
+    parentCommentId?: string,
+  ) => {
     if (!user) {
       toast({
         title: "Login Required",
@@ -151,17 +206,18 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
     try {
       const db = getDatabase();
-      const likePath = isReply && parentCommentId
-        ? `comments/${id}/${parentCommentId}/replies/${commentId}/likes/${user.uid}`
-        : `comments/${id}/${commentId}/likes/${user.uid}`;
+      const likePath =
+        isReply && parentCommentId
+          ? `comments/${id}/${parentCommentId}/replies/${commentId}/likes/${user.uid}`
+          : `comments/${id}/${commentId}/likes/${user.uid}`;
       const likeRef = ref(db, likePath);
-      
+
       const isLiked = likedComments.has(commentId);
-      
+
       if (isLiked) {
         // Unlike
         await remove(likeRef);
-        setLikedComments(prev => {
+        setLikedComments((prev) => {
           const newSet = new Set(prev);
           newSet.delete(commentId);
           return newSet;
@@ -170,12 +226,12 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
         // Like
         await set(likeRef, {
           userId: user.uid,
-          username: user.displayName || user.email?.split('@')[0] || 'user',
-          createdAt: Date.now()
+          username: user.displayName || user.email?.split("@")[0] || "user",
+          createdAt: Date.now(),
         });
-        setLikedComments(prev => new Set(prev).add(commentId));
+        setLikedComments((prev) => new Set(prev).add(commentId));
       }
-      
+
       // Refresh comments to update like counts
       fetchComments();
     } catch (error) {
@@ -195,7 +251,7 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
   };
 
   const toggleReplies = (commentId: string) => {
-    setExpandedReplies(prev => {
+    setExpandedReplies((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(commentId)) {
         newSet.delete(commentId);
@@ -208,7 +264,7 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
   const formatTimeAgo = (timestamp: number) => {
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 60) return 'now';
+    if (seconds < 60) return "now";
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
     if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
@@ -221,25 +277,29 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
       const db = getDatabase();
       const likesRef = ref(db, `likes/${id}`);
       const snapshot = await get(likesRef);
-      
+
       if (snapshot.exists()) {
         const likesData = snapshot.val();
         const usersArray = await Promise.all(
-          Object.entries(likesData).map(async ([uid, likeData]: [string, any]) => {
-            // Fetch user details
-            const userRef = ref(db, `users/${uid}`);
-            const userSnapshot = await get(userRef);
-            const userData = userSnapshot.val();
-            
-            return {
-              uid,
-              username: likeData.username || userData?.username || 'user',
-              avatar: userData?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-              createdAt: likeData.createdAt
-            };
-          })
+          Object.entries(likesData).map(
+            async ([uid, likeData]: [string, any]) => {
+              // Fetch user details
+              const userRef = ref(db, `users/${uid}`);
+              const userSnapshot = await get(userRef);
+              const userData = userSnapshot.val();
+
+              return {
+                uid,
+                username: likeData.username || userData?.username || "user",
+                avatar:
+                  userData?.photoURL ||
+                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+                createdAt: likeData.createdAt,
+              };
+            },
+          ),
         );
-        
+
         // Sort by most recent first
         usersArray.sort((a, b) => b.createdAt - a.createdAt);
         setAllLikedUsers(usersArray);
@@ -296,25 +356,25 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
         // Unlike
         await remove(likeRef);
         await update(postRef, {
-          likes: likesCount - 1
+          likes: likesCount - 1,
         });
 
         setIsLiked(false);
-        setLikesCount(prev => Math.max(0, prev - 1));
+        setLikesCount((prev) => Math.max(0, prev - 1));
       } else {
         // Like
         await set(likeRef, {
           userId: user.uid,
-          username: user.displayName || user.email?.split('@')[0] || 'user',
-          createdAt: Date.now()
+          username: user.displayName || user.email?.split("@")[0] || "user",
+          createdAt: Date.now(),
         });
 
         await update(postRef, {
-          likes: likesCount + 1
+          likes: likesCount + 1,
         });
 
         setIsLiked(true);
-        setLikesCount(prev => prev + 1);
+        setLikesCount((prev) => prev + 1);
       }
     } catch (error: any) {
       console.error("Error toggling like:", error);
@@ -334,37 +394,44 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
     try {
       const db = getDatabase();
       const commentText = comment.trim();
-      
+
       if (replyingTo) {
         // This is a reply to a comment
-        const repliesRef = ref(db, `comments/${id}/${replyingTo.commentId}/replies`);
+        const repliesRef = ref(
+          db,
+          `comments/${id}/${replyingTo.commentId}/replies`,
+        );
         const newReplyRef = push(repliesRef);
-        
+
         const newReply = {
           userId: user.uid,
-          username: user.displayName || user.email?.split('@')[0] || 'user',
-          userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          username: user.displayName || user.email?.split("@")[0] || "user",
+          userAvatar:
+            user.photoURL ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           text: commentText,
           createdAt: Date.now(),
-          replyTo: replyingTo.username
+          replyTo: replyingTo.username,
         };
 
         await set(newReplyRef, newReply);
-        
+
         // Expand replies for this comment
-        setExpandedReplies(prev => new Set(prev).add(replyingTo.commentId));
+        setExpandedReplies((prev) => new Set(prev).add(replyingTo.commentId));
         setReplyingTo(null);
       } else {
         // This is a new comment
         const commentsRef = ref(db, `comments/${id}`);
         const newCommentRef = push(commentsRef);
-        
+
         const newComment = {
           userId: user.uid,
-          username: user.displayName || user.email?.split('@')[0] || 'user',
-          userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          username: user.displayName || user.email?.split("@")[0] || "user",
+          userAvatar:
+            user.photoURL ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           text: commentText,
-          createdAt: Date.now()
+          createdAt: Date.now(),
         };
 
         await set(newCommentRef, newComment);
@@ -372,9 +439,9 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
         const postRef = ref(db, `posts/${id}`);
         const postSnapshot = await get(postRef);
         const currentComments = postSnapshot.val()?.comments || 0;
-        
+
         await update(postRef, {
-          comments: currentComments + 1
+          comments: currentComments + 1,
         });
       }
 
@@ -397,7 +464,10 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
       {/* Header */}
       <div className="flex items-center gap-3 p-4">
         <Avatar className="h-10 w-10">
-          <AvatarImage src={avatar} alt={username} />
+          <AvatarImage
+            src={getSafeAvatarUrl(avatar, username)}
+            alt={username}
+          />
           <AvatarFallback>{username[0].toUpperCase()}</AvatarFallback>
         </Avatar>
         <div className="flex-1">
@@ -410,9 +480,9 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
       {/* Image/Video */}
       <div className="w-full aspect-square bg-muted relative">
-        {image ? (
-          image.includes('video') || image.endsWith('.mp4') || image.endsWith('.mov') || image.endsWith('.webm') ? (
-            <div 
+        {image && !mediaError && !isBlockedMediaUrl ? (
+          isVideoUrl(image) ? (
+            <div
               className="relative w-full h-full"
               onClick={() => {
                 if (videoRef.current) {
@@ -425,14 +495,14 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
               }}
               onDoubleClick={() => handleLike()}
             >
-              <video 
+              <video
                 ref={videoRef}
-                src={image} 
+                src={image}
                 loop
                 muted={isMuted}
                 playsInline
                 className="w-full h-full object-cover cursor-pointer"
-                onError={(e) => console.error('Video load error:', e)}
+                onError={() => setMediaError(true)}
               />
               <button
                 onClick={(e) => {
@@ -453,20 +523,17 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
               className="relative w-full h-full"
               onDoubleClick={() => handleLike()}
             >
-              <img 
-                src={image} 
-                alt="Post" 
+              <img
+                src={image}
+                alt="Post"
                 className="w-full h-full object-cover cursor-pointer"
-                onError={(e) => {
-                  console.error('Image load error:', image);
-                  (e.target as HTMLImageElement).src = 'https://via.placeholder.com/400?text=Image+Not+Found';
-                }}
+                onError={() => setMediaError(true)}
               />
             </div>
           )
         ) : (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-            <p>No media</p>
+            <p>Media unavailable</p>
           </div>
         )}
       </div>
@@ -474,17 +541,17 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
       {/* Actions */}
       <div className="p-4">
         <div className="flex items-center gap-4 mb-3">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className={`h-8 w-8 ${isLiked ? 'text-red-500' : 'hover:text-red-500'}`}
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 ${isLiked ? "text-red-500" : "hover:text-red-500"}`}
             onClick={handleLike}
           >
-            <Heart className={`h-6 w-6 ${isLiked ? 'fill-current' : ''}`} />
+            <Heart className={`h-6 w-6 ${isLiked ? "fill-current" : ""}`} />
           </Button>
-          <Button 
-            variant="ghost" 
-            size="icon" 
+          <Button
+            variant="ghost"
+            size="icon"
             className="h-8 w-8"
             onClick={() => setShowComments(!showComments)}
           >
@@ -499,11 +566,11 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
         </div>
 
         {/* Likes */}
-        <p 
-          className={`font-semibold text-sm mb-2 ${likesCount > 0 ? 'cursor-pointer hover:text-muted-foreground' : ''}`}
+        <p
+          className={`font-semibold text-sm mb-2 ${likesCount > 0 ? "cursor-pointer hover:text-muted-foreground" : ""}`}
           onClick={handleShowLikes}
         >
-          {likesCount.toLocaleString()} {likesCount === 1 ? 'like' : 'likes'}
+          {likesCount.toLocaleString()} {likesCount === 1 ? "like" : "likes"}
         </p>
 
         {/* Caption */}
@@ -514,7 +581,7 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
         {/* View Comments */}
         {comments.length > 0 && !showComments && (
-          <button 
+          <button
             className="text-sm text-muted-foreground mt-2 hover:text-foreground"
             onClick={() => setShowComments(true)}
           >
@@ -530,12 +597,19 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                 {/* Main Comment */}
                 <div className="flex gap-2">
                   <Avatar className="h-8 w-8 flex-shrink-0">
-                    <AvatarImage src={commentItem.userAvatar} alt={commentItem.username} />
-                    <AvatarFallback>{commentItem.username[0].toUpperCase()}</AvatarFallback>
+                    <AvatarImage
+                      src={commentItem.userAvatar}
+                      alt={commentItem.username}
+                    />
+                    <AvatarFallback>
+                      {commentItem.username[0].toUpperCase()}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm">
-                      <span className="font-semibold mr-2">{commentItem.username}</span>
+                      <span className="font-semibold mr-2">
+                        {commentItem.username}
+                      </span>
                       <MentionText text={commentItem.text} />
                     </p>
                     <div className="flex items-center gap-3 mt-1">
@@ -544,11 +618,17 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                       </span>
                       {commentItem.likesCount > 0 && (
                         <span className="text-xs text-muted-foreground font-medium">
-                          {commentItem.likesCount} {commentItem.likesCount === 1 ? 'like' : 'likes'}
+                          {commentItem.likesCount}{" "}
+                          {commentItem.likesCount === 1 ? "like" : "likes"}
                         </span>
                       )}
                       <button
-                        onClick={() => handleReplyToComment(commentItem.id, commentItem.username)}
+                        onClick={() =>
+                          handleReplyToComment(
+                            commentItem.id,
+                            commentItem.username,
+                          )
+                        }
                         className="text-xs text-muted-foreground font-medium hover:text-foreground"
                       >
                         Reply
@@ -559,12 +639,12 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                     onClick={() => handleLikeComment(commentItem.id)}
                     className="flex-shrink-0 p-1"
                   >
-                    <Heart 
-                      className={`h-3 w-3 ${likedComments.has(commentItem.id) ? 'fill-red-500 text-red-500' : 'text-muted-foreground hover:text-foreground'}`} 
+                    <Heart
+                      className={`h-3 w-3 ${likedComments.has(commentItem.id) ? "fill-red-500 text-red-500" : "text-muted-foreground hover:text-foreground"}`}
                     />
                   </button>
                 </div>
-                
+
                 {/* Replies */}
                 {commentItem.repliesCount > 0 && (
                   <div className="ml-10">
@@ -574,7 +654,8 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                         className="text-xs text-muted-foreground font-medium hover:text-foreground flex items-center gap-1"
                       >
                         <span className="w-6 h-[1px] bg-muted-foreground/50" />
-                        View {commentItem.repliesCount} {commentItem.repliesCount === 1 ? 'reply' : 'replies'}
+                        View {commentItem.repliesCount}{" "}
+                        {commentItem.repliesCount === 1 ? "reply" : "replies"}
                       </button>
                     ) : (
                       <div className="space-y-2">
@@ -588,12 +669,19 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                         {commentItem.repliesList.map((reply: any) => (
                           <div key={reply.id} className="flex gap-2">
                             <Avatar className="h-6 w-6 flex-shrink-0">
-                              <AvatarImage src={reply.userAvatar} alt={reply.username} />
-                              <AvatarFallback>{reply.username[0].toUpperCase()}</AvatarFallback>
+                              <AvatarImage
+                                src={reply.userAvatar}
+                                alt={reply.username}
+                              />
+                              <AvatarFallback>
+                                {reply.username[0].toUpperCase()}
+                              </AvatarFallback>
                             </Avatar>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm">
-                                <span className="font-semibold mr-2">{reply.username}</span>
+                                <span className="font-semibold mr-2">
+                                  {reply.username}
+                                </span>
                                 <MentionText text={reply.text} />
                               </p>
                               <div className="flex items-center gap-3 mt-1">
@@ -602,11 +690,17 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                                 </span>
                                 {reply.likesCount > 0 && (
                                   <span className="text-xs text-muted-foreground font-medium">
-                                    {reply.likesCount} {reply.likesCount === 1 ? 'like' : 'likes'}
+                                    {reply.likesCount}{" "}
+                                    {reply.likesCount === 1 ? "like" : "likes"}
                                   </span>
                                 )}
                                 <button
-                                  onClick={() => handleReplyToComment(commentItem.id, reply.username)}
+                                  onClick={() =>
+                                    handleReplyToComment(
+                                      commentItem.id,
+                                      reply.username,
+                                    )
+                                  }
                                   className="text-xs text-muted-foreground font-medium hover:text-foreground"
                                 >
                                   Reply
@@ -614,11 +708,17 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                               </div>
                             </div>
                             <button
-                              onClick={() => handleLikeComment(reply.id, true, commentItem.id)}
+                              onClick={() =>
+                                handleLikeComment(
+                                  reply.id,
+                                  true,
+                                  commentItem.id,
+                                )
+                              }
                               className="flex-shrink-0 p-1"
                             >
-                              <Heart 
-                                className={`h-3 w-3 ${likedComments.has(reply.id) ? 'fill-red-500 text-red-500' : 'text-muted-foreground hover:text-foreground'}`} 
+                              <Heart
+                                className={`h-3 w-3 ${likedComments.has(reply.id) ? "fill-red-500 text-red-500" : "text-muted-foreground hover:text-foreground"}`}
                               />
                             </button>
                           </div>
@@ -648,7 +748,8 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
           {replyingTo && (
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-xs text-muted-foreground">
-                Replying to <span className="font-medium">@{replyingTo.username}</span>
+                Replying to{" "}
+                <span className="font-medium">@{replyingTo.username}</span>
               </span>
               <button
                 onClick={() => {
@@ -664,15 +765,19 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
           <form onSubmit={handleComment} className="flex items-center gap-2">
             <MentionInput
               ref={commentInputRef}
-              placeholder={replyingTo ? `Reply to @${replyingTo.username}...` : "Add a comment..."}
+              placeholder={
+                replyingTo
+                  ? `Reply to @${replyingTo.username}...`
+                  : "Add a comment..."
+              }
               value={comment}
               onChange={(val) => setComment(val)}
               className="flex-1 border-0 focus-visible:ring-0 px-0"
               disabled={isSubmitting}
             />
-            <Button 
-              type="submit" 
-              variant="ghost" 
+            <Button
+              type="submit"
+              variant="ghost"
               size="sm"
               disabled={!comment.trim() || isSubmitting}
               className="text-blue-500 hover:text-blue-600 font-semibold"
@@ -685,11 +790,11 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
 
       {/* Likes Modal */}
       {showLikesModal && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
           onClick={() => setShowLikesModal(false)}
         >
-          <div 
+          <div
             className="bg-background rounded-2xl w-full max-w-sm max-h-[70vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
@@ -719,8 +824,8 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
               ) : (
                 <div className="space-y-3">
                   {likedUsers.map((likedUser) => (
-                    <div 
-                      key={likedUser.uid} 
+                    <div
+                      key={likedUser.uid}
                       className="flex items-center gap-3 cursor-pointer hover:bg-secondary p-2 rounded-lg transition-colors"
                       onClick={() => {
                         setShowLikesModal(false);
@@ -728,11 +833,18 @@ export function PostCard({ id, username, avatar, image, likes: initialLikes, cap
                       }}
                     >
                       <Avatar className="h-12 w-12">
-                        <AvatarImage src={likedUser.avatar} alt={likedUser.username} />
-                        <AvatarFallback>{likedUser.username[0].toUpperCase()}</AvatarFallback>
+                        <AvatarImage
+                          src={likedUser.avatar}
+                          alt={likedUser.username}
+                        />
+                        <AvatarFallback>
+                          {likedUser.username[0].toUpperCase()}
+                        </AvatarFallback>
                       </Avatar>
                       <div className="flex-1">
-                        <p className="font-semibold text-sm">{likedUser.username}</p>
+                        <p className="font-semibold text-sm">
+                          {likedUser.username}
+                        </p>
                       </div>
                     </div>
                   ))}

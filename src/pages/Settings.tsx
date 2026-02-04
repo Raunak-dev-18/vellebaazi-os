@@ -8,34 +8,42 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { getDatabase, ref, update, get } from "firebase/database";
+import { getDatabase, ref, update, get, remove } from "firebase/database";
 import { updateProfile } from "firebase/auth";
-import { uploadToS3 } from "@/lib/supabase";
+import { uploadToStorage } from "@/lib/storage";
 
 export default function Settings() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  
+
   const [username, setUsername] = useState("");
   const [gender, setGender] = useState("prefer-not-to-say");
   const [accountPrivacy, setAccountPrivacy] = useState("public");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profilePicture, setProfilePicture] = useState("");
-  const [selectedProfilePic, setSelectedProfilePic] = useState<File | null>(null);
-  const [previewProfilePic, setPreviewProfilePic] = useState<string | null>(null);
+  const [selectedProfilePic, setSelectedProfilePic] = useState<File | null>(
+    null,
+  );
+  const [previewProfilePic, setPreviewProfilePic] = useState<string | null>(
+    null,
+  );
   const [isUploadingPic, setIsUploadingPic] = useState(false);
+  const [isCleaningLegacy, setIsCleaningLegacy] = useState(false);
+
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Something went wrong";
 
   useEffect(() => {
     const fetchUserSettings = async () => {
       if (!user) return;
-      
+
       try {
         const db = getDatabase();
         const userRef = ref(db, `users/${user.uid}`);
         const snapshot = await get(userRef);
-        
+
         if (snapshot.exists()) {
           const userData = snapshot.val();
           setUsername(userData.username || user.displayName || "");
@@ -60,7 +68,7 @@ export default function Settings() {
     if (!file) return;
 
     // Validate file type - only images
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif"];
     if (!validTypes.includes(file.type)) {
       toast({
         title: "Invalid File Type",
@@ -90,53 +98,53 @@ export default function Settings() {
     setIsUploadingPic(true);
     try {
       const db = getDatabase();
-      
+
       // Generate unique filename
-      const fileExtension = selectedProfilePic.name.split('.').pop();
+      const fileExtension = selectedProfilePic.name.split(".").pop();
       const fileName = `${user.uid}/profile.${fileExtension}`;
 
-      // Upload file to Supabase S3 Storage
-      const photoURL = await uploadToS3(selectedProfilePic, fileName);
+      // Upload file to Storage API
+      const photoURL = await uploadToStorage(selectedProfilePic, fileName);
 
       // Update Firebase Auth profile
       await updateProfile(user, {
-        photoURL: photoURL
+        photoURL: photoURL,
       });
-      
+
       // Update database
       const userRef = ref(db, `users/${user.uid}`);
       await update(userRef, {
-        photoURL: photoURL
+        photoURL: photoURL,
       });
 
       // Update all user's posts with new avatar
-      const postsRef = ref(db, 'posts');
+      const postsRef = ref(db, "posts");
       const postsSnapshot = await get(postsRef);
-      
+
       if (postsSnapshot.exists()) {
         const allPosts = postsSnapshot.val();
         const updatePromises = Object.entries(allPosts)
           .filter(([_, post]: [string, any]) => post.userId === user.uid)
-          .map(([postId, _]: [string, any]) => 
-            update(ref(db, `posts/${postId}`), { userAvatar: photoURL })
+          .map(([postId, _]: [string, any]) =>
+            update(ref(db, `posts/${postId}`), { userAvatar: photoURL }),
           );
-        
+
         await Promise.all(updatePromises);
       }
 
       setProfilePicture(photoURL);
       setSelectedProfilePic(null);
       setPreviewProfilePic(null);
-      
+
       toast({
         title: "Profile Picture Updated",
         description: "Your profile picture has been updated successfully",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error uploading profile picture:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to upload profile picture",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -146,7 +154,7 @@ export default function Settings() {
 
   const handleSaveSettings = async () => {
     if (!user) return;
-    
+
     if (!username.trim()) {
       toast({
         title: "Error",
@@ -159,57 +167,135 @@ export default function Settings() {
     setIsSaving(true);
     try {
       const db = getDatabase();
-      
+
       // Check if username is already taken by another user
-      const usersRef = ref(db, 'users');
+      const usersRef = ref(db, "users");
       const usersSnapshot = await get(usersRef);
-      
+
       if (usersSnapshot.exists()) {
         const usersData = usersSnapshot.val();
         const usernameTaken = Object.entries(usersData).some(
-          ([uid, data]: [string, any]) => 
-            uid !== user.uid && data.username === username.trim()
+          ([uid, data]: [string, any]) =>
+            uid !== user.uid && data.username === username.trim(),
         );
-        
+
         if (usernameTaken) {
           toast({
             title: "Username Taken",
-            description: "This username is already in use. Please choose another.",
+            description:
+              "This username is already in use. Please choose another.",
             variant: "destructive",
           });
           setIsSaving(false);
           return;
         }
       }
-      
+
       // Update Firebase Auth profile
       await updateProfile(user, {
-        displayName: username.trim()
+        displayName: username.trim(),
       });
-      
+
       // Update database
       const userRef = ref(db, `users/${user.uid}`);
       await update(userRef, {
         username: username.trim(),
         gender: gender,
-        accountPrivacy: accountPrivacy
+        accountPrivacy: accountPrivacy,
       });
-      
+
       toast({
         title: "Settings Saved",
         description: "Your settings have been updated successfully",
       });
-      
+
       // Navigate back to profile
-      navigate('/profile');
-    } catch (error: any) {
+      navigate("/profile");
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to save settings",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const isLegacyMediaUrl = (url?: string | null) => {
+    if (!url) return false;
+    return url.includes("supabase.co/storage");
+  };
+
+  const handleCleanupLegacyMedia = async () => {
+    if (!user) return;
+
+    setIsCleaningLegacy(true);
+    try {
+      const db = getDatabase();
+      let removedPosts = 0;
+      let removedStories = 0;
+      let clearedAvatar = false;
+
+      // Clear legacy avatar if needed
+      if (isLegacyMediaUrl(profilePicture)) {
+        await updateProfile(user, { photoURL: "" });
+        await update(ref(db, `users/${user.uid}`), { photoURL: "" });
+        setProfilePicture("");
+        clearedAvatar = true;
+      }
+
+      // Clean legacy posts for current user
+      const postsRef = ref(db, "posts");
+      const postsSnapshot = await get(postsRef);
+      if (postsSnapshot.exists()) {
+        const allPosts = postsSnapshot.val();
+        const legacyPosts = Object.entries(allPosts).filter(
+          ([_, post]: [string, any]) =>
+            post.userId === user.uid && isLegacyMediaUrl(post.mediaUrl),
+        );
+
+        await Promise.all(
+          legacyPosts.map(async ([postId]) => {
+            await remove(ref(db, `posts/${postId}`));
+            await remove(ref(db, `likes/${postId}`));
+            await remove(ref(db, `comments/${postId}`));
+            removedPosts += 1;
+          }),
+        );
+      }
+
+      // Clean legacy stories for current user
+      const storiesRef = ref(db, "stories");
+      const storiesSnapshot = await get(storiesRef);
+      if (storiesSnapshot.exists()) {
+        const allStories = storiesSnapshot.val();
+        const legacyStories = Object.entries(allStories).filter(
+          ([_, story]: [string, any]) =>
+            story.userId === user.uid && isLegacyMediaUrl(story.mediaUrl),
+        );
+
+        await Promise.all(
+          legacyStories.map(async ([storyId]) => {
+            await remove(ref(db, `stories/${storyId}`));
+            removedStories += 1;
+          }),
+        );
+      }
+
+      toast({
+        title: "Cleanup Complete",
+        description: `Removed ${removedPosts} post(s) and ${removedStories} stor${removedStories === 1 ? "y" : "ies"}${clearedAvatar ? ", and reset your avatar" : ""}.`,
+      });
+    } catch (error: unknown) {
+      console.error("Error cleaning legacy media:", error);
+      toast({
+        title: "Cleanup Failed",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsCleaningLegacy(false);
     }
   };
 
@@ -225,10 +311,10 @@ export default function Settings() {
     <div className="min-h-screen pb-20">
       {/* Header */}
       <div className="border-b border-border p-4 flex items-center gap-4">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           size="icon"
-          onClick={() => navigate('/profile')}
+          onClick={() => navigate("/profile")}
         >
           <ArrowLeft className="h-5 w-5" />
         </Button>
@@ -248,9 +334,13 @@ export default function Settings() {
             <Label>Profile Picture</Label>
             <div className="flex items-center gap-6">
               <Avatar className="h-24 w-24 border-2 border-border">
-                <AvatarImage 
-                  src={previewProfilePic || profilePicture || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid}`} 
-                  alt="Profile" 
+                <AvatarImage
+                  src={
+                    previewProfilePic ||
+                    profilePicture ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid}`
+                  }
+                  alt="Profile"
                 />
                 <AvatarFallback>
                   {username.substring(0, 2).toUpperCase()}
@@ -266,12 +356,7 @@ export default function Settings() {
                 />
                 <div className="flex gap-2">
                   <label htmlFor="profile-pic-upload">
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      size="sm"
-                      asChild
-                    >
+                    <Button type="button" variant="outline" size="sm" asChild>
                       <span>
                         <Camera className="h-4 w-4 mr-2" />
                         Choose Photo
@@ -280,16 +365,16 @@ export default function Settings() {
                   </label>
                   {selectedProfilePic && (
                     <>
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         size="sm"
                         onClick={handleUploadProfilePicture}
                         disabled={isUploadingPic}
                       >
                         {isUploadingPic ? "Uploading..." : "Upload"}
                       </Button>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         onClick={() => {
                           setSelectedProfilePic(null);
@@ -330,19 +415,31 @@ export default function Settings() {
             <RadioGroup value={gender} onValueChange={setGender}>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="male" id="male" />
-                <Label htmlFor="male" className="font-normal cursor-pointer">Male</Label>
+                <Label htmlFor="male" className="font-normal cursor-pointer">
+                  Male
+                </Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="female" id="female" />
-                <Label htmlFor="female" className="font-normal cursor-pointer">Female</Label>
+                <Label htmlFor="female" className="font-normal cursor-pointer">
+                  Female
+                </Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="other" id="other" />
-                <Label htmlFor="other" className="font-normal cursor-pointer">Other</Label>
+                <Label htmlFor="other" className="font-normal cursor-pointer">
+                  Other
+                </Label>
               </div>
               <div className="flex items-center space-x-2">
-                <RadioGroupItem value="prefer-not-to-say" id="prefer-not-to-say" />
-                <Label htmlFor="prefer-not-to-say" className="font-normal cursor-pointer">
+                <RadioGroupItem
+                  value="prefer-not-to-say"
+                  id="prefer-not-to-say"
+                />
+                <Label
+                  htmlFor="prefer-not-to-say"
+                  className="font-normal cursor-pointer"
+                >
                   Prefer not to say
                 </Label>
               </div>
@@ -360,11 +457,20 @@ export default function Settings() {
           {/* Account Privacy */}
           <div className="space-y-3">
             <Label>Account Privacy</Label>
-            <RadioGroup value={accountPrivacy} onValueChange={setAccountPrivacy}>
+            <RadioGroup
+              value={accountPrivacy}
+              onValueChange={setAccountPrivacy}
+            >
               <div className="flex items-start space-x-2 p-4 border border-border rounded-lg hover:bg-secondary transition-colors">
                 <RadioGroupItem value="public" id="public" className="mt-1" />
-                <div className="flex-1 cursor-pointer" onClick={() => setAccountPrivacy("public")}>
-                  <Label htmlFor="public" className="font-semibold cursor-pointer">
+                <div
+                  className="flex-1 cursor-pointer"
+                  onClick={() => setAccountPrivacy("public")}
+                >
+                  <Label
+                    htmlFor="public"
+                    className="font-semibold cursor-pointer"
+                  >
                     Public Account
                   </Label>
                   <p className="text-sm text-muted-foreground mt-1">
@@ -374,12 +480,19 @@ export default function Settings() {
               </div>
               <div className="flex items-start space-x-2 p-4 border border-border rounded-lg hover:bg-secondary transition-colors">
                 <RadioGroupItem value="private" id="private" className="mt-1" />
-                <div className="flex-1 cursor-pointer" onClick={() => setAccountPrivacy("private")}>
-                  <Label htmlFor="private" className="font-semibold cursor-pointer">
+                <div
+                  className="flex-1 cursor-pointer"
+                  onClick={() => setAccountPrivacy("private")}
+                >
+                  <Label
+                    htmlFor="private"
+                    className="font-semibold cursor-pointer"
+                  >
                     Private Account
                   </Label>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Only approved followers can see your posts. New followers need your approval.
+                    Only approved followers can see your posts. New followers
+                    need your approval.
                   </p>
                 </div>
               </div>
@@ -388,8 +501,27 @@ export default function Settings() {
         </div>
 
         {/* Save Button */}
-        <div className="pt-6">
-          <Button 
+        <div className="pt-6 space-y-4">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-semibold">Legacy Media Cleanup</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Remove old Supabase media links from your posts, stories, and
+                  avatar.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={handleCleanupLegacyMedia}
+                disabled={isCleaningLegacy}
+              >
+                {isCleaningLegacy ? "Cleaning..." : "Clean Legacy Media"}
+              </Button>
+            </div>
+          </div>
+
+          <Button
             onClick={handleSaveSettings}
             disabled={isSaving}
             className="w-full max-w-md"

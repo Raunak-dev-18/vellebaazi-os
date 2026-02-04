@@ -8,7 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { getDatabase, ref, push, set, get } from "firebase/database";
-import { uploadToS3 } from "@/lib/supabase";
+import { uploadToStorage } from "@/lib/storage";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { extractMentions } from "@/components/MentionText";
 
@@ -177,14 +177,14 @@ export default function Create() {
 
       const db = getDatabase();
       
-      // Upload media to Supabase with timeout
+      // Upload media to Storage API with timeout
       const fileExtension = selectedFile.name.split('.').pop();
       const fileName = `${postType}s/${user.uid}/${Date.now()}.${fileExtension}`;
       
       let mediaUrl;
       try {
         mediaUrl = await Promise.race([
-          uploadToS3(selectedFile, fileName),
+          uploadToStorage(selectedFile, fileName),
           new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Upload timeout')), 120000) // 2 minute timeout
           )
@@ -591,3 +591,8 @@ export default function Create() {
     </div>
   );
 }
+
+
+
+
+

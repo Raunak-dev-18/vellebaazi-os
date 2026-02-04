@@ -1,20 +1,51 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Search, Send, Phone, Video, Info, ArrowLeft, Image as ImageIcon, Paperclip, X, Users, Link, ExternalLink, MoreVertical, Smile, Forward, Trash2 } from "lucide-react";
+import {
+  Search,
+  Send,
+  Phone,
+  Video,
+  Info,
+  ArrowLeft,
+  Image as ImageIcon,
+  Paperclip,
+  X,
+  Users,
+  Link,
+  ExternalLink,
+  MoreVertical,
+  Smile,
+  Forward,
+  Trash2,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
-import { getDatabase, ref, push, set, onValue, get, update, remove } from "firebase/database";
+import {
+  getDatabase,
+  ref,
+  push,
+  set,
+  onValue,
+  get,
+  update,
+  remove,
+} from "firebase/database";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { uploadToChatS3 } from "@/lib/supabase";
+import { uploadToChatStorage } from "@/lib/storage";
 import { DocumentCard, VideoCard, AudioCard } from "@/components/DocumentCard";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
-import { hasCognixMention, extractCognixQuery, getCognixResponseStream, COGNIX_USER } from "@/lib/ai";
+import {
+  hasCognixMention,
+  extractCognixQuery,
+  getCognixResponseStream,
+  COGNIX_USER,
+} from "@/lib/ai";
 
 // Quick reaction emojis
-const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
+const QUICK_REACTIONS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
 
 // Giphy API
 const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
@@ -52,6 +83,14 @@ interface Chat {
   unreadCount?: number;
 }
 
+interface ChatData {
+  otherUserId: string;
+  otherUsername: string;
+  otherUserAvatar?: string;
+  lastMessage?: string;
+  lastMessageTime?: string;
+}
+
 interface MessageReaction {
   emoji: string;
   userId: string;
@@ -70,6 +109,29 @@ interface Message {
   reactions?: { [key: string]: MessageReaction };
   forwarded?: boolean;
 }
+
+interface MessageData {
+  senderId: string;
+  text: string;
+  timestamp: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileType?: string;
+  linkPreview?: LinkPreview;
+  reactions?: { [key: string]: MessageReaction };
+  forwarded?: boolean;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isChatData = (value: unknown): value is ChatData =>
+  isRecord(value) && typeof value.otherUserId === "string";
+
+const isMessageData = (value: unknown): value is MessageData =>
+  isRecord(value) &&
+  typeof value.senderId === "string" &&
+  typeof value.timestamp === "string";
 
 export default function Bakaiti() {
   const { user } = useAuth();
@@ -90,24 +152,36 @@ export default function Bakaiti() {
   const [isTyping, setIsTyping] = useState(false);
   const [otherUserTyping, setOtherUserTyping] = useState(false);
   const [cognixTyping, setCognixTyping] = useState(false);
-  const [cognixStreamingMessage, setCognixStreamingMessage] = useState<string>("");
+  const [cognixStreamingMessage, setCognixStreamingMessage] =
+    useState<string>("");
   const [cognixMessageId, setCognixMessageId] = useState<string | null>(null);
-  const [allMessagesData, setAllMessagesData] = useState<any[]>([]);
+  const [allMessagesData, setAllMessagesData] = useState<
+    Array<[string, MessageData]>
+  >([]);
   const [displayedCount, setDisplayedCount] = useState(5);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [linkPreview, setLinkPreview] = useState<LinkPreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
-  const [activeEmojiPicker, setActiveEmojiPicker] = useState<string | null>(null);
+  const [activeEmojiPicker, setActiveEmojiPicker] = useState<string | null>(
+    null,
+  );
   const [hoveredMessage, setHoveredMessage] = useState<string | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
   const [gifSearchQuery, setGifSearchQuery] = useState("");
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
-  const [activeReactionDetails, setActiveReactionDetails] = useState<{ messageId: string; emoji: string } | null>(null);
-  const [activeMessageMenu, setActiveMessageMenu] = useState<string | null>(null);
+  const [activeReactionDetails, setActiveReactionDetails] = useState<{
+    messageId: string;
+    emoji: string;
+  } | null>(null);
+  const [activeMessageMenu, setActiveMessageMenu] = useState<string | null>(
+    null,
+  );
   const [showForwardDialog, setShowForwardDialog] = useState(false);
-  const [messageToForward, setMessageToForward] = useState<Message | null>(null);
+  const [messageToForward, setMessageToForward] = useState<Message | null>(
+    null,
+  );
   const [forwardSearchQuery, setForwardSearchQuery] = useState("");
   const [isForwarding, setIsForwarding] = useState(false);
   const [gifOffset, setGifOffset] = useState(0);
@@ -119,7 +193,7 @@ export default function Bakaiti() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const linkPreviewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const username = user?.displayName || user?.email?.split('@')[0] || 'user';
+  const username = user?.displayName || user?.email?.split("@")[0] || "user";
 
   // URL regex pattern
   const urlRegex = /(https?:\/\/[^\s]+)/gi;
@@ -136,8 +210,10 @@ export default function Bakaiti() {
     try {
       // Using LinkPreview API (free tier available)
       // Alternative: You can use your own backend or other services
-      const response = await fetch(`https://api.linkpreview.net/?key=free&q=${encodeURIComponent(url)}`);
-      
+      const response = await fetch(
+        `https://api.linkpreview.net/?key=free&q=${encodeURIComponent(url)}`,
+      );
+
       if (!response.ok) {
         // Fallback: Create basic preview from URL
         const urlObj = new URL(url);
@@ -148,7 +224,7 @@ export default function Bakaiti() {
         });
         return;
       }
-      
+
       const data = await response.json();
       const parsedUrl = new URL(url);
       setLinkPreview({
@@ -182,7 +258,7 @@ export default function Bakaiti() {
     }
 
     const url = extractUrl(messageText);
-    
+
     if (!url) {
       setLinkPreview(null);
       return;
@@ -203,7 +279,11 @@ export default function Bakaiti() {
   // Check if we need to open a chat from navigation state
   useEffect(() => {
     if (location.state?.openChatWith) {
-      const { userId, username: otherUsername, avatar } = location.state.openChatWith;
+      const {
+        userId,
+        username: otherUsername,
+        avatar,
+      } = location.state.openChatWith;
       openOrCreateChat(userId, otherUsername, avatar);
     }
   }, [location.state]);
@@ -214,97 +294,108 @@ export default function Bakaiti() {
 
     const db = getDatabase();
     const chatsRef = ref(db, `userChats/${user.uid}`);
-    
+
     const unsubscribe = onValue(chatsRef, async (snapshot) => {
       if (snapshot.exists()) {
-        const chatsData = snapshot.val();
-        const chatEntries = Object.entries(chatsData);
-        
-        // Sort by last message time first (before fetching avatars)
-        const sortedEntries = chatEntries.sort(([, a]: [string, any], [, b]: [string, any]) => 
-          new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime()
+        const chatsData = snapshot.val() as Record<string, unknown>;
+        const chatEntries = Object.entries(chatsData).filter(
+          (entry): entry is [string, ChatData] => isChatData(entry[1]),
         );
-        
+
+        // Sort by last message time first (before fetching avatars)
+        const sortedEntries = chatEntries.sort(
+          ([, a], [, b]) =>
+            new Date(b.lastMessageTime || 0).getTime() -
+            new Date(a.lastMessageTime || 0).getTime(),
+        );
+
         // Load first 10 chats immediately
         const firstBatch = sortedEntries.slice(0, 10);
         const remainingChats = sortedEntries.slice(10);
-        
+
         // Process first batch
         const firstBatchChats: Chat[] = [];
         for (const [chatId, chatData] of firstBatch) {
-          const data = chatData as any;
-          
+          const data = chatData;
+
           if (data.otherUserId === user.uid) continue;
-          
+
           // Use stored avatar initially for faster load
           firstBatchChats.push({
             chatId,
             otherUserId: data.otherUserId,
             otherUsername: data.otherUsername,
-            otherUserAvatar: data.otherUserAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
-            lastMessage: data.lastMessage || '',
-            lastMessageTime: data.lastMessageTime || ''
+            otherUserAvatar:
+              data.otherUserAvatar ||
+              `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
+            lastMessage: data.lastMessage || "",
+            lastMessageTime: data.lastMessageTime || "",
           });
         }
-        
+
         setChats(firstBatchChats);
         setIsLoadingChats(false);
-        
+
         // Load remaining chats in background
         if (remainingChats.length > 0) {
           setTimeout(async () => {
             const allChats = [...firstBatchChats];
-            
+
             // Process remaining chats in chunks of 20
             for (let i = 0; i < remainingChats.length; i += 20) {
               const chunk = remainingChats.slice(i, i + 20);
-              
+
               for (const [chatId, chatData] of chunk) {
-                const data = chatData as any;
-                
+                const data = chatData;
+
                 if (data.otherUserId === user.uid) continue;
-                
+
                 allChats.push({
                   chatId,
                   otherUserId: data.otherUserId,
                   otherUsername: data.otherUsername,
-                  otherUserAvatar: data.otherUserAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
-                  lastMessage: data.lastMessage || '',
-                  lastMessageTime: data.lastMessageTime || ''
+                  otherUserAvatar:
+                    data.otherUserAvatar ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
+                  lastMessage: data.lastMessage || "",
+                  lastMessageTime: data.lastMessageTime || "",
                 });
               }
-              
+
               setChats([...allChats]);
-              
+
               // Small delay between chunks to avoid blocking
               if (i + 20 < remainingChats.length) {
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise((resolve) => setTimeout(resolve, 100));
               }
             }
           }, 0);
         }
-        
+
         // Update avatars in background for all chats
         setTimeout(async () => {
           const updatedChats = await Promise.all(
             sortedEntries.map(async ([chatId, chatData]) => {
-              const data = chatData as any;
-              
+              const data = chatData;
+
               if (data.otherUserId === user.uid) return null;
-              
+
               try {
                 const otherUserRef = ref(db, `users/${data.otherUserId}`);
                 const otherUserSnapshot = await get(otherUserRef);
                 const otherUserData = otherUserSnapshot.val();
-                const currentAvatar = otherUserData?.photoURL || data.otherUserAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`;
-                
+                const currentAvatar =
+                  otherUserData?.photoURL ||
+                  data.otherUserAvatar ||
+                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`;
+
                 return {
                   chatId,
                   otherUserId: data.otherUserId,
                   otherUsername: data.otherUsername,
                   otherUserAvatar: currentAvatar,
-                  lastMessage: data.lastMessage || '',
-                  lastMessageTime: data.lastMessageTime || ''
+                  lastMessage: data.lastMessage || "",
+                  lastMessageTime: data.lastMessageTime || "",
                 };
               } catch (error) {
                 console.error("Error fetching avatar:", error);
@@ -312,18 +403,21 @@ export default function Bakaiti() {
                   chatId,
                   otherUserId: data.otherUserId,
                   otherUsername: data.otherUsername,
-                  otherUserAvatar: data.otherUserAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
-                  lastMessage: data.lastMessage || '',
-                  lastMessageTime: data.lastMessageTime || ''
+                  otherUserAvatar:
+                    data.otherUserAvatar ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.otherUsername}`,
+                  lastMessage: data.lastMessage || "",
+                  lastMessageTime: data.lastMessageTime || "",
                 };
               }
-            })
+            }),
           );
-          
-          const validChats = updatedChats.filter((chat): chat is Chat => chat !== null);
+
+          const validChats = updatedChats.filter(
+            (chat): chat is Chat => chat !== null,
+          );
           setChats(validChats);
         }, 500);
-        
       } else {
         setChats([]);
         setIsLoadingChats(false);
@@ -344,24 +438,27 @@ export default function Bakaiti() {
 
     const db = getDatabase();
     const messagesRef = ref(db, `messages/${selectedChat.chatId}`);
-    
+
     const unsubscribe = onValue(messagesRef, (snapshot) => {
       if (snapshot.exists()) {
-        const messagesData = snapshot.val();
-        const messageEntries = Object.entries(messagesData);
-        
-        // Sort by timestamp (oldest first)
-        const sortedEntries = messageEntries.sort(([, a]: [string, any], [, b]: [string, any]) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        const messagesData = snapshot.val() as Record<string, unknown>;
+        const messageEntries = Object.entries(messagesData).filter(
+          (entry): entry is [string, MessageData] => isMessageData(entry[1]),
         );
-        
+
+        // Sort by timestamp (oldest first)
+        const sortedEntries = messageEntries.sort(
+          ([, a], [, b]) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
+
         // Store all messages data
         setAllMessagesData(sortedEntries);
         setHasMoreMessages(sortedEntries.length > displayedCount);
-        
+
         // Show only the last N messages
         const messagesToShow = sortedEntries.slice(-displayedCount);
-        const messagesArray: Message[] = messagesToShow.map(([id, data]: [string, any]) => ({
+        const messagesArray: Message[] = messagesToShow.map(([id, data]) => ({
           id,
           senderId: data.senderId,
           text: data.text,
@@ -370,9 +467,9 @@ export default function Bakaiti() {
           fileName: data.fileName,
           fileType: data.fileType,
           reactions: data.reactions || {},
-          forwarded: data.forwarded || false
+          forwarded: data.forwarded || false,
         }));
-        
+
         setMessages(messagesArray);
       } else {
         setMessages([]);
@@ -387,11 +484,11 @@ export default function Bakaiti() {
   // Update displayed messages when count changes
   useEffect(() => {
     if (allMessagesData.length === 0) return;
-    
+
     setHasMoreMessages(allMessagesData.length > displayedCount);
-    
+
     const messagesToShow = allMessagesData.slice(-displayedCount);
-    const messagesArray: Message[] = messagesToShow.map(([id, data]: [string, any]) => ({
+    const messagesArray: Message[] = messagesToShow.map(([id, data]) => ({
       id,
       senderId: data.senderId,
       text: data.text,
@@ -400,20 +497,20 @@ export default function Bakaiti() {
       fileName: data.fileName,
       fileType: data.fileType,
       reactions: data.reactions || {},
-      forwarded: data.forwarded || false
+      forwarded: data.forwarded || false,
     }));
-    
+
     setMessages(messagesArray);
   }, [displayedCount, allMessagesData]);
 
   const loadMoreMessages = () => {
     if (isLoadingMore || !hasMoreMessages) return;
-    
+
     setIsLoadingMore(true);
-    
+
     // Load 10 more messages
     setTimeout(() => {
-      setDisplayedCount(prev => prev + 10);
+      setDisplayedCount((prev) => prev + 10);
       setIsLoadingMore(false);
     }, 200);
   };
@@ -421,22 +518,22 @@ export default function Bakaiti() {
   // Fetch trending GIFs
   const fetchTrendingGifs = async (loadMore = false) => {
     if (!GIPHY_API_KEY) return;
-    
+
     // Only show full loading spinner for initial load, not for load more
     if (!loadMore) {
       setIsLoadingGifs(true);
     }
-    
+
     try {
       const currentOffset = loadMore ? gifOffset : 0;
       const response = await fetch(
-        `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20&offset=${currentOffset}&rating=g`
+        `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20&offset=${currentOffset}&rating=g`,
       );
       const data = await response.json();
       const newGifs = data.data || [];
-      
+
       if (loadMore && newGifs.length > 0) {
-        setGifs(prev => [...prev, ...newGifs]);
+        setGifs((prev) => [...prev, ...newGifs]);
       } else if (!loadMore) {
         setGifs(newGifs);
       }
@@ -455,22 +552,22 @@ export default function Bakaiti() {
       fetchTrendingGifs(false);
       return;
     }
-    
+
     // Only show full loading spinner for initial load, not for load more
     if (!loadMore) {
       setIsLoadingGifs(true);
     }
-    
+
     try {
       const currentOffset = loadMore ? gifOffset : 0;
       const response = await fetch(
-        `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`
+        `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
       );
       const data = await response.json();
       const newGifs = data.data || [];
-      
+
       if (loadMore && newGifs.length > 0) {
-        setGifs(prev => [...prev, ...newGifs]);
+        setGifs((prev) => [...prev, ...newGifs]);
       } else if (!loadMore) {
         setGifs(newGifs);
       }
@@ -484,10 +581,10 @@ export default function Bakaiti() {
   };
 
   const [isLoadingMoreGifs, setIsLoadingMoreGifs] = useState(false);
-  
+
   const loadMoreGifs = async () => {
     if (isLoadingGifs || isLoadingMoreGifs || !hasMoreGifs) return;
-    
+
     setIsLoadingMoreGifs(true);
     try {
       if (gifSearchQuery.trim()) {
@@ -503,30 +600,48 @@ export default function Bakaiti() {
   // Send GIF as message
   const sendGif = async (gif: GiphyGif) => {
     if (!user || !selectedChat) return;
-    
+
     try {
       const db = getDatabase();
       const messagesRef = ref(db, `messages/${selectedChat.chatId}`);
       const newMessageRef = push(messagesRef);
-      
-      const messageData = {
+
+      const messageData: MessageData = {
         senderId: user.uid,
-        text: '',
+        text: "",
         timestamp: new Date().toISOString(),
         fileUrl: gif.images.original.url,
-        fileName: gif.title || 'GIF',
-        fileType: 'image/gif'
+        fileName: gif.title || "GIF",
+        fileType: "image/gif",
       };
-      
+
       await set(newMessageRef, messageData);
-      
+
       // Update last message
-      const lastMessage = '🎬 GIF';
-      await set(ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessage`), lastMessage);
-      await set(ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessageTime`), messageData.timestamp);
-      await set(ref(db, `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessage`), lastMessage);
-      await set(ref(db, `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessageTime`), messageData.timestamp);
-      
+      const lastMessage = "🎬 GIF";
+      await set(
+        ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessage`),
+        lastMessage,
+      );
+      await set(
+        ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessageTime`),
+        messageData.timestamp,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessage`,
+        ),
+        lastMessage,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessageTime`,
+        ),
+        messageData.timestamp,
+      );
+
       setShowGifPicker(false);
       setGifSearchQuery("");
     } catch (error) {
@@ -553,7 +668,7 @@ export default function Bakaiti() {
   // Debounced GIF search
   useEffect(() => {
     if (!showGifPicker) return;
-    
+
     const timer = setTimeout(() => {
       setGifOffset(0);
       setGifs([]);
@@ -563,21 +678,25 @@ export default function Bakaiti() {
         fetchTrendingGifs(false);
       }
     }, 300);
-    
+
     return () => clearTimeout(timer);
   }, [gifSearchQuery]);
 
   // Add reaction to message
   const addReaction = async (messageId: string, emoji: string) => {
     if (!user || !selectedChat) return;
-    
+
     try {
       const db = getDatabase();
-      const reactionRef = ref(db, `messages/${selectedChat.chatId}/${messageId}/reactions/${user.uid}`);
-      
+      const reactionRef = ref(
+        db,
+        `messages/${selectedChat.chatId}/${messageId}/reactions/${user.uid}`,
+      );
+
       // Check if user already reacted with same emoji - if so, remove it
-      const existingReaction = messages.find(m => m.id === messageId)?.reactions?.[user.uid];
-      
+      const existingReaction = messages.find((m) => m.id === messageId)
+        ?.reactions?.[user.uid];
+
       if (existingReaction?.emoji === emoji) {
         // Remove reaction
         await set(reactionRef, null);
@@ -586,10 +705,10 @@ export default function Bakaiti() {
         await set(reactionRef, {
           emoji,
           userId: user.uid,
-          username: username
+          username: username,
         });
       }
-      
+
       setActiveEmojiPicker(null);
     } catch (error) {
       console.error("Error adding reaction:", error);
@@ -604,13 +723,16 @@ export default function Bakaiti() {
   // Unsend message (for sender - removes for everyone)
   const unsendMessage = async (messageId: string) => {
     if (!user || !selectedChat) return;
-    
+
     try {
       const db = getDatabase();
-      const messageRef = ref(db, `messages/${selectedChat.chatId}/${messageId}`);
-      
+      const messageRef = ref(
+        db,
+        `messages/${selectedChat.chatId}/${messageId}`,
+      );
+
       await remove(messageRef);
-      
+
       setActiveMessageMenu(null);
       toast({
         title: "Message Unsent",
@@ -629,18 +751,21 @@ export default function Bakaiti() {
   // Delete message for me (only hides from current user)
   const deleteMessageForMe = async (messageId: string) => {
     if (!user || !selectedChat) return;
-    
+
     try {
       const db = getDatabase();
-      const deletedRef = ref(db, `deletedMessages/${user.uid}/${selectedChat.chatId}/${messageId}`);
-      
+      const deletedRef = ref(
+        db,
+        `deletedMessages/${user.uid}/${selectedChat.chatId}/${messageId}`,
+      );
+
       await set(deletedRef, {
-        deletedAt: new Date().toISOString()
+        deletedAt: new Date().toISOString(),
       });
-      
+
       // Remove from local state
-      setMessages(prev => prev.filter(m => m.id !== messageId));
-      
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+
       setActiveMessageMenu(null);
       toast({
         title: "Message Deleted",
@@ -667,39 +792,59 @@ export default function Bakaiti() {
   // Forward message to selected chat
   const forwardMessageToChat = async (targetChat: Chat) => {
     if (!user || !messageToForward) return;
-    
+
     setIsForwarding(true);
     try {
       const db = getDatabase();
       const messagesRef = ref(db, `messages/${targetChat.chatId}`);
       const newMessageRef = push(messagesRef);
-      
-      const forwardedMessage: any = {
+
+      const forwardedMessage: MessageData = {
         senderId: user.uid,
-        text: messageToForward.text || '',
+        text: messageToForward.text || "",
         timestamp: new Date().toISOString(),
         forwarded: true,
       };
-      
+
       // Include file if present
       if (messageToForward.fileUrl) {
         forwardedMessage.fileUrl = messageToForward.fileUrl;
         forwardedMessage.fileName = messageToForward.fileName;
         forwardedMessage.fileType = messageToForward.fileType;
       }
-      
+
       await set(newMessageRef, forwardedMessage);
-      
+
       // Update last message in both users' chat lists
-      const lastMessage = messageToForward.text || (messageToForward.fileUrl ? '📎 Forwarded' : 'Forwarded message');
-      await set(ref(db, `userChats/${user.uid}/${targetChat.chatId}/lastMessage`), `↪ ${lastMessage}`);
-      await set(ref(db, `userChats/${user.uid}/${targetChat.chatId}/lastMessageTime`), forwardedMessage.timestamp);
-      await set(ref(db, `userChats/${targetChat.otherUserId}/${targetChat.chatId}/lastMessage`), `↪ ${lastMessage}`);
-      await set(ref(db, `userChats/${targetChat.otherUserId}/${targetChat.chatId}/lastMessageTime`), forwardedMessage.timestamp);
-      
+      const lastMessage =
+        messageToForward.text ||
+        (messageToForward.fileUrl ? "📎 Forwarded" : "Forwarded message");
+      await set(
+        ref(db, `userChats/${user.uid}/${targetChat.chatId}/lastMessage`),
+        `↪ ${lastMessage}`,
+      );
+      await set(
+        ref(db, `userChats/${user.uid}/${targetChat.chatId}/lastMessageTime`),
+        forwardedMessage.timestamp,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${targetChat.otherUserId}/${targetChat.chatId}/lastMessage`,
+        ),
+        `↪ ${lastMessage}`,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${targetChat.otherUserId}/${targetChat.chatId}/lastMessageTime`,
+        ),
+        forwardedMessage.timestamp,
+      );
+
       setShowForwardDialog(false);
       setMessageToForward(null);
-      
+
       toast({
         title: "Message Forwarded",
         description: `Sent to ${targetChat.otherUsername}`,
@@ -717,9 +862,12 @@ export default function Bakaiti() {
   };
 
   // Filter chats for forward dialog
-  const filteredChatsForForward = chats.filter(chat => 
-    chat.otherUsername.toLowerCase().includes(forwardSearchQuery.toLowerCase()) &&
-    chat.chatId !== selectedChat?.chatId
+  const filteredChatsForForward = chats.filter(
+    (chat) =>
+      chat.otherUsername
+        .toLowerCase()
+        .includes(forwardSearchQuery.toLowerCase()) &&
+      chat.chatId !== selectedChat?.chatId,
   );
 
   // Listen to typing indicator
@@ -727,14 +875,19 @@ export default function Bakaiti() {
     if (!selectedChat || !user) return;
 
     const db = getDatabase();
-    const typingRef = ref(db, `typing/${selectedChat.chatId}/${selectedChat.otherUserId}`);
-    
+    const typingRef = ref(
+      db,
+      `typing/${selectedChat.chatId}/${selectedChat.otherUserId}`,
+    );
+
     const unsubscribe = onValue(typingRef, (snapshot) => {
       if (snapshot.exists()) {
         const typingData = snapshot.val();
         const now = Date.now();
         // Consider typing if updated within last 3 seconds
-        setOtherUserTyping(typingData.isTyping && (now - typingData.timestamp < 3000));
+        setOtherUserTyping(
+          typingData.isTyping && now - typingData.timestamp < 3000,
+        );
       } else {
         setOtherUserTyping(false);
       }
@@ -748,9 +901,13 @@ export default function Bakaiti() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, otherUserTyping]);
 
-  const openOrCreateChat = async (otherUserId: string, otherUsername: string, otherUserAvatar: string) => {
+  const openOrCreateChat = async (
+    otherUserId: string,
+    otherUsername: string,
+    otherUserAvatar: string,
+  ) => {
     if (!user) return;
-    
+
     // Prevent self-messaging
     if (otherUserId === user.uid) {
       toast({
@@ -762,48 +919,53 @@ export default function Bakaiti() {
     }
 
     const db = getDatabase();
-    
+
     // Create a consistent chat ID (sorted user IDs)
-    const chatId = [user.uid, otherUserId].sort().join('_');
-    
+    const chatId = [user.uid, otherUserId].sort().join("_");
+
     // Check if chat exists
     const chatRef = ref(db, `userChats/${user.uid}/${chatId}`);
     const snapshot = await get(chatRef);
-    
+
     // Fetch the latest user data to get current avatars
     const otherUserRef = ref(db, `users/${otherUserId}`);
     const otherUserSnapshot = await get(otherUserRef);
     const otherUserData = otherUserSnapshot.val();
-    const currentOtherUserAvatar = otherUserData?.photoURL || otherUserAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUsername}`;
-    
-    const currentUserAvatar = user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
-    
+    const currentOtherUserAvatar =
+      otherUserData?.photoURL ||
+      otherUserAvatar ||
+      `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUsername}`;
+
+    const currentUserAvatar =
+      user.photoURL ||
+      `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+
     if (!snapshot.exists()) {
       // Create new chat for both users
       await set(ref(db, `userChats/${user.uid}/${chatId}`), {
         otherUserId,
         otherUsername,
         otherUserAvatar: currentOtherUserAvatar,
-        lastMessage: '',
-        lastMessageTime: new Date().toISOString()
+        lastMessage: "",
+        lastMessageTime: new Date().toISOString(),
       });
-      
+
       await set(ref(db, `userChats/${otherUserId}/${chatId}`), {
         otherUserId: user.uid,
         otherUsername: username,
         otherUserAvatar: currentUserAvatar,
-        lastMessage: '',
-        lastMessageTime: new Date().toISOString()
+        lastMessage: "",
+        lastMessageTime: new Date().toISOString(),
       });
     }
-    
+
     setSelectedChat({
       chatId,
       otherUserId,
       otherUsername,
       otherUserAvatar: currentOtherUserAvatar,
-      lastMessage: '',
-      lastMessageTime: ''
+      lastMessage: "",
+      lastMessageTime: "",
     });
   };
 
@@ -812,11 +974,11 @@ export default function Bakaiti() {
 
     const db = getDatabase();
     const typingRef = ref(db, `typing/${selectedChat.chatId}/${user.uid}`);
-    
+
     // Set typing status
     await set(typingRef, {
       isTyping: true,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Clear existing timeout
@@ -828,7 +990,7 @@ export default function Bakaiti() {
     typingTimeoutRef.current = setTimeout(async () => {
       await set(typingRef, {
         isTyping: false,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }, 2000);
   };
@@ -842,141 +1004,186 @@ export default function Bakaiti() {
       const db = getDatabase();
       const messagesRef = ref(db, `messages/${selectedChat.chatId}`);
       const newMessageRef = push(messagesRef);
-      
-      let fileUrl = '';
-      let fileName = '';
-      let fileType = '';
-      
-      // Upload file if selected using Supabase S3
+
+      let fileUrl = "";
+      let fileName = "";
+      let fileType = "";
+
+      // Upload file if selected using Storage API
       if (selectedFile) {
         try {
-          const fileExtension = selectedFile.name.split('.').pop() || 'file';
-          const s3FileName = `${selectedChat.chatId}/${Date.now()}_${user.uid}.${fileExtension}`;
-          
-          fileUrl = await uploadToChatS3(selectedFile, s3FileName);
+          const fileExtension = selectedFile.name.split(".").pop() || "file";
+          const storageFileName = `${selectedChat.chatId}/${Date.now()}_${user.uid}.${fileExtension}`;
+
+          fileUrl = await uploadToChatStorage(selectedFile, storageFileName);
           fileName = selectedFile.name;
           fileType = selectedFile.type;
-        } catch (uploadError: any) {
+        } catch (uploadError: unknown) {
           console.error("Upload error:", uploadError);
           throw new Error("Failed to upload file. Please try again.");
         }
       }
-      
-      const messageData: any = {
+
+      const messageData: MessageData = {
         senderId: user.uid,
-        text: messageText.trim() || (selectedFile ? `Sent ${selectedFile.type.startsWith('image/') ? 'an image' : 'a file'}` : ''),
-        timestamp: new Date().toISOString()
+        text:
+          messageText.trim() ||
+          (selectedFile
+            ? `Sent ${selectedFile.type.startsWith("image/") ? "an image" : "a file"}`
+            : ""),
+        timestamp: new Date().toISOString(),
       };
-      
+
       if (fileUrl) {
         messageData.fileUrl = fileUrl;
         messageData.fileName = fileName;
         messageData.fileType = fileType;
       }
-      
+
       // Add link preview if available
       if (linkPreview) {
         messageData.linkPreview = linkPreview;
       }
-      
+
       await set(newMessageRef, messageData);
-      
+
       // Update last message in both users' chat lists
-      const lastMessage = messageText.trim() || (selectedFile ? `📎 ${fileName}` : '');
-      await set(ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessage`), lastMessage);
-      await set(ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessageTime`), messageData.timestamp);
-      await set(ref(db, `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessage`), lastMessage);
-      await set(ref(db, `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessageTime`), messageData.timestamp);
-      
+      const lastMessage =
+        messageText.trim() || (selectedFile ? `📎 ${fileName}` : "");
+      await set(
+        ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessage`),
+        lastMessage,
+      );
+      await set(
+        ref(db, `userChats/${user.uid}/${selectedChat.chatId}/lastMessageTime`),
+        messageData.timestamp,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessage`,
+        ),
+        lastMessage,
+      );
+      await set(
+        ref(
+          db,
+          `userChats/${selectedChat.otherUserId}/${selectedChat.chatId}/lastMessageTime`,
+        ),
+        messageData.timestamp,
+      );
+
       // Clear typing indicator
       const typingRef = ref(db, `typing/${selectedChat.chatId}/${user.uid}`);
       await set(typingRef, {
         isTyping: false,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      
+
       const sentMessageText = messageText.trim();
       setMessageText("");
       setSelectedFile(null);
       setFilePreview(null);
       setLinkPreview(null);
-      
+
       // Check for @cognix mention and trigger AI response
       if (hasCognixMention(sentMessageText)) {
         handleCognixResponse(sentMessageText, selectedChat.chatId);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Send message error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to send message",
+        description:
+          error instanceof Error ? error.message : "Failed to send message",
         variant: "destructive",
       });
     } finally {
       setIsUploading(false);
     }
   };
-  
+
   // Handle Cognix AI response with streaming
   const handleCognixResponse = async (userMessage: string, chatId: string) => {
     setCognixTyping(true);
     setCognixStreamingMessage("");
-    
+
     try {
       const db = getDatabase();
       const query = extractCognixQuery(userMessage);
-      
+
       // Get recent messages for context
-      const recentMessages = messages.slice(-5).map(msg => ({
-        role: msg.senderId === COGNIX_USER.uid ? 'assistant' as const : 'user' as const,
-        content: msg.text
+      const recentMessages = messages.slice(-5).map((msg) => ({
+        role:
+          msg.senderId === COGNIX_USER.uid
+            ? ("assistant" as const)
+            : ("user" as const),
+        content: msg.text,
       }));
-      
+
       // Create placeholder message for streaming
       const messagesRef = ref(db, `messages/${chatId}`);
       const newMessageRef = push(messagesRef);
       const messageId = newMessageRef.key;
       setCognixMessageId(messageId);
-      
+
       const timestamp = new Date().toISOString();
-      
+
       // Set initial empty message
       await set(newMessageRef, {
         senderId: COGNIX_USER.uid,
         text: "",
         timestamp,
         isAI: true,
-        isStreaming: true
+        isStreaming: true,
       });
-      
+
       setCognixTyping(false); // Hide typing, show streaming message
-      
+
       // Stream the response
       await getCognixResponseStream(
         query || userMessage,
         recentMessages,
         // On each chunk
         (chunk) => {
-          setCognixStreamingMessage(prev => prev + chunk);
+          setCognixStreamingMessage((prev) => prev + chunk);
         },
         // On complete
         async (fullResponse) => {
           // Update the message with final content
           await update(ref(db, `messages/${chatId}/${messageId}`), {
             text: fullResponse,
-            isStreaming: false
+            isStreaming: false,
           });
-          
+
           // Update last message
-          const lastMessagePreview = `🤖 ${fullResponse.slice(0, 30)}${fullResponse.length > 30 ? '...' : ''}`;
-          await set(ref(db, `userChats/${user!.uid}/${chatId}/lastMessage`), lastMessagePreview);
-          await set(ref(db, `userChats/${user!.uid}/${chatId}/lastMessageTime`), timestamp);
-          
+          const lastMessagePreview = `🤖 ${fullResponse.slice(0, 30)}${fullResponse.length > 30 ? "..." : ""}`;
+          await set(
+            ref(db, `userChats/${user!.uid}/${chatId}/lastMessage`),
+            lastMessagePreview,
+          );
+          await set(
+            ref(db, `userChats/${user!.uid}/${chatId}/lastMessageTime`),
+            timestamp,
+          );
+
           if (selectedChat) {
-            await set(ref(db, `userChats/${selectedChat.otherUserId}/${chatId}/lastMessage`), lastMessagePreview);
-            await set(ref(db, `userChats/${selectedChat.otherUserId}/${chatId}/lastMessageTime`), timestamp);
+            await set(
+              ref(
+                db,
+                `userChats/${selectedChat.otherUserId}/${chatId}/lastMessage`,
+              ),
+              lastMessagePreview,
+            );
+            await set(
+              ref(
+                db,
+                `userChats/${selectedChat.otherUserId}/${chatId}/lastMessageTime`,
+              ),
+              timestamp,
+            );
           }
-          
+
           setCognixStreamingMessage("");
           setCognixMessageId(null);
         },
@@ -984,18 +1191,18 @@ export default function Bakaiti() {
         async (errorMessage) => {
           await update(ref(db, `messages/${chatId}/${messageId}`), {
             text: errorMessage,
-            isStreaming: false
+            isStreaming: false,
           });
-          
+
           setCognixStreamingMessage("");
           setCognixMessageId(null);
-          
+
           toast({
             title: "Cognix Error",
             description: errorMessage,
             variant: "destructive",
           });
-        }
+        },
       );
     } catch (error) {
       console.error("Error getting Cognix response:", error);
@@ -1029,9 +1236,9 @@ export default function Bakaiti() {
     }
 
     setSelectedFile(file);
-    
+
     // Create preview for images
-    if (file.type.startsWith('image/')) {
+    if (file.type.startsWith("image/")) {
       const reader = new FileReader();
       reader.onloadend = () => {
         setFilePreview(reader.result as string);
@@ -1047,7 +1254,7 @@ export default function Bakaiti() {
     if (!items) return;
 
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
+      if (items[i].type.indexOf("image") !== -1) {
         const file = items[i].getAsFile();
         if (file) {
           processFile(file);
@@ -1070,7 +1277,7 @@ export default function Bakaiti() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     const file = e.dataTransfer.files[0];
     if (file) {
       processFile(file);
@@ -1081,12 +1288,12 @@ export default function Bakaiti() {
     setSelectedFile(null);
     setFilePreview(null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      fileInputRef.current.value = "";
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
@@ -1099,8 +1306,8 @@ export default function Bakaiti() {
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMins / 60);
     const diffDays = Math.floor(diffHours / 24);
-    
-    if (diffMins < 1) return 'Just now';
+
+    if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m`;
     if (diffHours < 24) return `${diffHours}h`;
     if (diffDays < 7) return `${diffDays}d`;
@@ -1125,13 +1332,15 @@ export default function Bakaiti() {
               className="pl-10 bg-secondary border-0 rounded-lg"
             />
           </div>
-          <Button 
+          <Button
             className="w-full"
             variant="outline"
-            onClick={() => toast({
-              title: "Coming Soon",
-              description: "Group chat feature will be available soon!",
-            })}
+            onClick={() =>
+              toast({
+                title: "Coming Soon",
+                description: "Group chat feature will be available soon!",
+              })
+            }
           >
             <Users className="h-4 w-4 mr-2" />
             Create Group
@@ -1158,31 +1367,38 @@ export default function Bakaiti() {
                   key={chat.chatId}
                   onClick={() => setSelectedChat(chat)}
                   className={`flex items-center gap-3 p-4 cursor-pointer hover:bg-secondary transition-colors ${
-                    selectedChat?.chatId === chat.chatId ? 'bg-secondary' : ''
+                    selectedChat?.chatId === chat.chatId ? "bg-secondary" : ""
                   }`}
                 >
                   <div className="relative">
                     <Avatar className="h-14 w-14">
-                      <AvatarImage src={chat.otherUserAvatar} alt={chat.otherUsername} />
-                      <AvatarFallback>{chat.otherUsername[0].toUpperCase()}</AvatarFallback>
+                      <AvatarImage
+                        src={chat.otherUserAvatar}
+                        alt={chat.otherUsername}
+                      />
+                      <AvatarFallback>
+                        {chat.otherUsername[0].toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     {chat.unreadCount && chat.unreadCount > 0 && (
                       <div className="absolute -top-1 -right-1 h-5 w-5 bg-blue-500 rounded-full flex items-center justify-center">
                         <span className="text-xs text-white font-semibold">
-                          {chat.unreadCount > 9 ? '9+' : chat.unreadCount}
+                          {chat.unreadCount > 9 ? "9+" : chat.unreadCount}
                         </span>
                       </div>
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-semibold text-sm">{chat.otherUsername}</p>
+                      <p className="font-semibold text-sm">
+                        {chat.otherUsername}
+                      </p>
                       {chat.unreadCount && chat.unreadCount > 0 && (
                         <div className="h-2 w-2 bg-blue-500 rounded-full" />
                       )}
                     </div>
                     <p className="text-sm text-muted-foreground truncate">
-                      {chat.lastMessage || 'Start a conversation'}
+                      {chat.lastMessage || "Start a conversation"}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -1206,25 +1422,34 @@ export default function Bakaiti() {
             {/* Chat Header */}
             <div className="border-b border-border p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className="md:hidden"
                   onClick={() => setSelectedChat(null)}
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
-                <Avatar 
+                <Avatar
                   className="h-10 w-10 cursor-pointer"
-                  onClick={() => navigate(`/users/profile/${selectedChat.otherUsername}`)}
+                  onClick={() =>
+                    navigate(`/users/profile/${selectedChat.otherUsername}`)
+                  }
                 >
-                  <AvatarImage src={selectedChat.otherUserAvatar} alt={selectedChat.otherUsername} />
-                  <AvatarFallback>{selectedChat.otherUsername[0].toUpperCase()}</AvatarFallback>
+                  <AvatarImage
+                    src={selectedChat.otherUserAvatar}
+                    alt={selectedChat.otherUsername}
+                  />
+                  <AvatarFallback>
+                    {selectedChat.otherUsername[0].toUpperCase()}
+                  </AvatarFallback>
                 </Avatar>
                 <div>
-                  <p 
+                  <p
                     className="font-semibold text-sm cursor-pointer hover:text-muted-foreground"
-                    onClick={() => navigate(`/users/profile/${selectedChat.otherUsername}`)}
+                    onClick={() =>
+                      navigate(`/users/profile/${selectedChat.otherUsername}`)
+                    }
                   >
                     {selectedChat.otherUsername}
                   </p>
@@ -1244,7 +1469,7 @@ export default function Bakaiti() {
             </div>
 
             {/* Messages Area */}
-            <ScrollArea 
+            <ScrollArea
               className="flex-1 p-4"
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -1285,7 +1510,7 @@ export default function Bakaiti() {
                     </Button>
                   </div>
                 )}
-                
+
                 {messages.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <p>No messages yet</p>
@@ -1295,7 +1520,7 @@ export default function Bakaiti() {
                   messages.map((message) => (
                     <div
                       key={message.id}
-                      className={`flex items-end gap-2 ${message.senderId === user?.uid ? 'flex-row-reverse' : 'flex-row'}`}
+                      className={`flex items-end gap-2 ${message.senderId === user?.uid ? "flex-row-reverse" : "flex-row"}`}
                       onMouseEnter={() => setHoveredMessage(message.id)}
                       onMouseLeave={() => setHoveredMessage(null)}
                     >
@@ -1303,12 +1528,16 @@ export default function Bakaiti() {
                       {message.senderId === COGNIX_USER.uid && (
                         <Avatar className="h-8 w-8 flex-shrink-0">
                           <AvatarImage src={COGNIX_USER.avatar} alt="Cognix" />
-                          <AvatarFallback className="bg-indigo-500 text-white text-xs">AI</AvatarFallback>
+                          <AvatarFallback className="bg-indigo-500 text-white text-xs">
+                            AI
+                          </AvatarFallback>
                         </Avatar>
                       )}
-                      
+
                       {/* Message bubble and reactions container */}
-                      <div className={`flex flex-col max-w-[70%] ${message.senderId === user?.uid ? 'items-end' : 'items-start'}`}>
+                      <div
+                        className={`flex flex-col max-w-[70%] ${message.senderId === user?.uid ? "items-end" : "items-start"}`}
+                      >
                         {/* Cognix AI Label */}
                         {message.senderId === COGNIX_USER.uid && (
                           <span className="text-xs text-indigo-400 font-medium mb-1 flex items-center gap-1">
@@ -1318,184 +1547,255 @@ export default function Bakaiti() {
                         <div
                           className={`rounded-2xl px-4 py-2 ${
                             message.senderId === user?.uid
-                              ? 'bg-blue-500 text-white'
+                              ? "bg-blue-500 text-white"
                               : message.senderId === COGNIX_USER.uid
-                              ? 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/30'
-                              : 'bg-secondary'
+                                ? "bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/30"
+                                : "bg-secondary"
                           }`}
                         >
                           {/* Forwarded label */}
                           {message.forwarded && (
-                            <div className={`flex items-center gap-1 mb-1 text-xs italic ${
-                              message.senderId === user?.uid ? 'text-blue-200' : 'text-muted-foreground'
-                            }`}>
+                            <div
+                              className={`flex items-center gap-1 mb-1 text-xs italic ${
+                                message.senderId === user?.uid
+                                  ? "text-blue-200"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
                               <Forward className="h-3 w-3" />
                               <span>Forwarded</span>
                             </div>
                           )}
                           {/* Image files */}
-                          {message.fileUrl && message.fileType?.startsWith('image/') && (
-                            <img 
-                              src={message.fileUrl} 
-                              alt={message.fileName}
-                              className="rounded-lg mb-2 max-w-[250px] max-h-[250px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                              onClick={() => setImagePreview(message.fileUrl!)}
-                            />
-                          )}
+                          {message.fileUrl &&
+                            message.fileType?.startsWith("image/") && (
+                              <img
+                                src={message.fileUrl}
+                                alt={message.fileName}
+                                className="rounded-lg mb-2 max-w-[250px] max-h-[250px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                onClick={() =>
+                                  setImagePreview(message.fileUrl!)
+                                }
+                              />
+                            )}
                           {/* Video files */}
-                          {message.fileUrl && message.fileType?.startsWith('video/') && (
-                            <VideoCard
-                              fileUrl={message.fileUrl}
-                              fileName={message.fileName || 'Video'}
-                              isOwnMessage={message.senderId === user?.uid}
-                            />
-                          )}
+                          {message.fileUrl &&
+                            message.fileType?.startsWith("video/") && (
+                              <VideoCard
+                                fileUrl={message.fileUrl}
+                                fileName={message.fileName || "Video"}
+                                isOwnMessage={message.senderId === user?.uid}
+                              />
+                            )}
                           {/* Audio files */}
-                          {message.fileUrl && message.fileType?.startsWith('audio/') && (
-                            <AudioCard
-                              fileUrl={message.fileUrl}
-                              fileName={message.fileName || 'Audio'}
-                              isOwnMessage={message.senderId === user?.uid}
-                            />
-                          )}
+                          {message.fileUrl &&
+                            message.fileType?.startsWith("audio/") && (
+                              <AudioCard
+                                fileUrl={message.fileUrl}
+                                fileName={message.fileName || "Audio"}
+                                isOwnMessage={message.senderId === user?.uid}
+                              />
+                            )}
                           {/* Document files (PDF, DOC, XLS, PPT, etc.) */}
-                          {message.fileUrl && !message.fileType?.startsWith('image/') && !message.fileType?.startsWith('video/') && !message.fileType?.startsWith('audio/') && (
-                            <DocumentCard
-                              fileUrl={message.fileUrl}
-                              fileName={message.fileName || 'Document'}
-                              fileType={message.fileType || ''}
-                              isOwnMessage={message.senderId === user?.uid}
-                            />
-                          )}
+                          {message.fileUrl &&
+                            !message.fileType?.startsWith("image/") &&
+                            !message.fileType?.startsWith("video/") &&
+                            !message.fileType?.startsWith("audio/") && (
+                              <DocumentCard
+                                fileUrl={message.fileUrl}
+                                fileName={message.fileName || "Document"}
+                                fileType={message.fileType || ""}
+                                isOwnMessage={message.senderId === user?.uid}
+                              />
+                            )}
                           {/* Message text with markdown support */}
-                          {(message.text || (message.id === cognixMessageId && cognixStreamingMessage)) && (
+                          {(message.text ||
+                            (message.id === cognixMessageId &&
+                              cognixStreamingMessage)) && (
                             <div className="text-sm break-words max-w-[300px]">
-                              <ChatMarkdown 
+                              <ChatMarkdown
                                 content={
-                                  message.id === cognixMessageId && cognixStreamingMessage 
-                                    ? cognixStreamingMessage 
+                                  message.id === cognixMessageId &&
+                                  cognixStreamingMessage
+                                    ? cognixStreamingMessage
                                     : message.text
                                 }
                                 isOwnMessage={message.senderId === user?.uid}
                               />
-                              {message.id === cognixMessageId && cognixStreamingMessage && (
-                                <span className="inline-block w-2 h-4 bg-indigo-400 ml-1 animate-pulse" />
-                              )}
+                              {message.id === cognixMessageId &&
+                                cognixStreamingMessage && (
+                                  <span className="inline-block w-2 h-4 bg-indigo-400 ml-1 animate-pulse" />
+                                )}
                             </div>
                           )}
-                          <p className={`text-xs mt-1 ${
-                            message.senderId === user?.uid 
-                              ? 'text-blue-100' 
-                              : message.senderId === COGNIX_USER.uid
-                              ? 'text-indigo-300'
-                              : 'text-muted-foreground'
-                          }`}>
+                          <p
+                            className={`text-xs mt-1 ${
+                              message.senderId === user?.uid
+                                ? "text-blue-100"
+                                : message.senderId === COGNIX_USER.uid
+                                  ? "text-indigo-300"
+                                  : "text-muted-foreground"
+                            }`}
+                          >
                             {formatTime(message.timestamp)}
                           </p>
                         </div>
-                        
+
                         {/* Reactions display */}
-                        {message.reactions && Object.keys(message.reactions).length > 0 && (
-                          <div className="flex gap-1 mt-1 flex-wrap relative">
-                            {Object.entries(
-                              Object.values(message.reactions).reduce((acc: { [key: string]: { count: number; users: any[] } }, r: any) => {
-                                if (!acc[r.emoji]) {
-                                  acc[r.emoji] = { count: 0, users: [] };
-                                }
-                                acc[r.emoji].count += 1;
-                                acc[r.emoji].users.push(r);
-                                return acc;
-                              }, {})
-                            ).map(([emoji, data]) => (
-                              <div key={emoji} className="relative">
-                                <div 
-                                  className="bg-secondary border border-border rounded-full px-2 py-0.5 text-sm flex items-center gap-1 cursor-pointer hover:bg-secondary/80"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveEmojiPicker(null);
-                                    setActiveReactionDetails(
-                                      activeReactionDetails?.messageId === message.id && activeReactionDetails?.emoji === emoji 
-                                        ? null 
-                                        : { messageId: message.id, emoji }
-                                    );
-                                  }}
+                        {message.reactions &&
+                          Object.keys(message.reactions).length > 0 && (
+                            <div className="flex gap-1 mt-1 flex-wrap relative">
+                              {(
+                                Object.entries(
+                                  Object.values(message.reactions).reduce<
+                                    Record<
+                                      string,
+                                      {
+                                        count: number;
+                                        users: MessageReaction[];
+                                      }
+                                    >
+                                  >((acc, r) => {
+                                    if (!acc[r.emoji]) {
+                                      acc[r.emoji] = {
+                                        count: 0,
+                                        users: [],
+                                      };
+                                    }
+                                    acc[r.emoji].count += 1;
+                                    acc[r.emoji].users.push(r);
+                                    return acc;
+                                  }, {}),
+                                ) as Array<
+                                  [
+                                    string,
+                                    { count: number; users: MessageReaction[] },
+                                  ]
                                 >
-                                  <span>{emoji}</span>
-                                  {(data as any).count > 1 && <span className="text-xs text-muted-foreground">{(data as any).count}</span>}
-                                </div>
-                                
-                                {/* Reaction details popup */}
-                                {activeReactionDetails?.messageId === message.id && activeReactionDetails?.emoji === emoji && (
-                                  <div 
-                                    className="absolute bottom-full mb-2 left-0 z-30 min-w-[150px]"
-                                    onClick={(e) => e.stopPropagation()}
+                              ).map(([emoji, data]) => (
+                                <div key={emoji} className="relative">
+                                  <div
+                                    className="bg-secondary border border-border rounded-full px-2 py-0.5 text-sm flex items-center gap-1 cursor-pointer hover:bg-secondary/80"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveEmojiPicker(null);
+                                      setActiveReactionDetails(
+                                        activeReactionDetails?.messageId ===
+                                          message.id &&
+                                          activeReactionDetails?.emoji === emoji
+                                          ? null
+                                          : { messageId: message.id, emoji },
+                                      );
+                                    }}
                                   >
-                                    <div className="bg-background border border-border rounded-lg shadow-lg p-2">
-                                      <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                        <span className="text-base">{emoji}</span>
-                                        <span>Reactions</span>
-                                      </div>
-                                      <div className="space-y-1">
-                                        {Object.entries(message.reactions!)
-                                          .filter(([_, r]: [string, any]) => r.emoji === emoji)
-                                          .map(([oderId, r]: [string, any]) => (
-                                            <div 
-                                              key={oderId}
-                                              className={`flex items-center justify-between gap-2 p-1 rounded ${r.userId === user?.uid ? 'hover:bg-destructive/10 cursor-pointer' : ''}`}
-                                              onClick={() => {
-                                                if (r.userId === user?.uid) {
-                                                  addReaction(message.id, emoji);
-                                                  setActiveReactionDetails(null);
-                                                }
-                                              }}
-                                            >
-                                              <span className="text-sm truncate">{r.username}</span>
-                                              {r.userId === user?.uid && (
-                                                <X className="h-3 w-3 text-destructive flex-shrink-0" />
-                                              )}
-                                            </div>
-                                          ))
-                                        }
-                                      </div>
-                                    </div>
+                                    <span>{emoji}</span>
+                                    {data.count > 1 && (
+                                      <span className="text-xs text-muted-foreground">
+                                        {data.count}
+                                      </span>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
+
+                                  {/* Reaction details popup */}
+                                  {activeReactionDetails?.messageId ===
+                                    message.id &&
+                                    activeReactionDetails?.emoji === emoji && (
+                                      <div
+                                        className="absolute bottom-full mb-2 left-0 z-30 min-w-[150px]"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div className="bg-background border border-border rounded-lg shadow-lg p-2">
+                                          <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                            <span className="text-base">
+                                              {emoji}
+                                            </span>
+                                            <span>Reactions</span>
+                                          </div>
+                                          <div className="space-y-1">
+                                            {(
+                                              Object.entries(
+                                                message.reactions!,
+                                              ) as Array<
+                                                [string, MessageReaction]
+                                              >
+                                            )
+                                              .filter(
+                                                ([, r]) => r.emoji === emoji,
+                                              )
+                                              .map(([oderId, r]) => (
+                                                <div
+                                                  key={oderId}
+                                                  className={`flex items-center justify-between gap-2 p-1 rounded ${r.userId === user?.uid ? "hover:bg-destructive/10 cursor-pointer" : ""}`}
+                                                  onClick={() => {
+                                                    if (
+                                                      r.userId === user?.uid
+                                                    ) {
+                                                      addReaction(
+                                                        message.id,
+                                                        emoji,
+                                                      );
+                                                      setActiveReactionDetails(
+                                                        null,
+                                                      );
+                                                    }
+                                                  }}
+                                                >
+                                                  <span className="text-sm truncate">
+                                                    {r.username}
+                                                  </span>
+                                                  {r.userId === user?.uid && (
+                                                    <X className="h-3 w-3 text-destructive flex-shrink-0" />
+                                                  )}
+                                                </div>
+                                              ))}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                       </div>
-                      
+
                       {/* Action buttons - show on hover */}
-                      <div 
-                        className={`flex items-center gap-1 relative ${hoveredMessage === message.id || activeEmojiPicker === message.id ? 'opacity-100' : 'opacity-0'} transition-opacity`}
+                      <div
+                        className={`flex items-center gap-1 relative ${hoveredMessage === message.id || activeEmojiPicker === message.id ? "opacity-100" : "opacity-0"} transition-opacity`}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <button 
+                        <button
                           className="p-1.5 hover:bg-secondary rounded-full"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setActiveEmojiPicker(activeEmojiPicker === message.id ? null : message.id);
+                            setActiveEmojiPicker(
+                              activeEmojiPicker === message.id
+                                ? null
+                                : message.id,
+                            );
                             setActiveReactionDetails(null);
                           }}
                         >
                           <Smile className="h-4 w-4 text-muted-foreground" />
                         </button>
-                        <button 
+                        <button
                           className="p-1.5 hover:bg-secondary rounded-full"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setActiveMessageMenu(activeMessageMenu === message.id ? null : message.id);
+                            setActiveMessageMenu(
+                              activeMessageMenu === message.id
+                                ? null
+                                : message.id,
+                            );
                             setActiveEmojiPicker(null);
                             setActiveReactionDetails(null);
                           }}
                         >
                           <MoreVertical className="h-4 w-4 text-muted-foreground" />
                         </button>
-                        
+
                         {/* Message Menu */}
                         {activeMessageMenu === message.id && (
-                          <div 
+                          <div
                             className="absolute bottom-full mb-2 right-0 z-20"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -1527,10 +1827,10 @@ export default function Bakaiti() {
                             </div>
                           </div>
                         )}
-                        
+
                         {/* Emoji Picker */}
                         {activeEmojiPicker === message.id && (
-                          <div 
+                          <div
                             className="absolute bottom-full mb-2 z-20"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -1554,40 +1854,62 @@ export default function Bakaiti() {
                     </div>
                   ))
                 )}
-                
+
                 {/* Typing Indicator */}
                 {otherUserTyping && (
                   <div className="flex justify-start">
                     <div className="bg-secondary rounded-2xl px-4 py-3">
                       <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <div
+                          className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
+                          style={{ animationDelay: "0ms" }}
+                        />
+                        <div
+                          className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
+                          style={{ animationDelay: "150ms" }}
+                        />
+                        <div
+                          className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
+                          style={{ animationDelay: "300ms" }}
+                        />
                       </div>
                     </div>
                   </div>
                 )}
-                
+
                 {/* Cognix AI Typing Indicator */}
                 {cognixTyping && (
                   <div className="flex justify-start items-end gap-2">
                     <Avatar className="h-6 w-6">
                       <AvatarImage src={COGNIX_USER.avatar} alt="Cognix" />
-                      <AvatarFallback className="bg-indigo-500 text-white text-xs">AI</AvatarFallback>
+                      <AvatarFallback className="bg-indigo-500 text-white text-xs">
+                        AI
+                      </AvatarFallback>
                     </Avatar>
                     <div className="bg-gradient-to-r from-indigo-500/20 to-purple-500/20 border border-indigo-500/30 rounded-2xl px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-indigo-400 font-medium">Cognix is thinking</span>
+                        <span className="text-xs text-indigo-400 font-medium">
+                          Cognix is thinking
+                        </span>
                         <div className="flex gap-1">
-                          <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <div
+                            className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                            style={{ animationDelay: "0ms" }}
+                          />
+                          <div
+                            className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                            style={{ animationDelay: "150ms" }}
+                          />
+                          <div
+                            className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                            style={{ animationDelay: "300ms" }}
+                          />
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
-                
+
                 <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
@@ -1654,7 +1976,7 @@ export default function Bakaiti() {
                                 Loading...
                               </>
                             ) : (
-                              'Load More GIFs'
+                              "Load More GIFs"
                             )}
                           </button>
                         )}
@@ -1662,31 +1984,35 @@ export default function Bakaiti() {
                     )}
                   </div>
                   <div className="p-1 border-t border-border text-center">
-                    <span className="text-[10px] text-muted-foreground">Powered by R8 GIF</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      Powered by R8 GIF
+                    </span>
                   </div>
                 </div>
               )}
-              
+
               {selectedFile && (
                 <div className="mb-3 p-3 bg-secondary rounded-lg flex items-center gap-3">
                   {filePreview ? (
-                    <img src={filePreview} alt="Preview" className="h-16 w-16 object-cover rounded" />
+                    <img
+                      src={filePreview}
+                      alt="Preview"
+                      className="h-16 w-16 object-cover rounded"
+                    />
                   ) : (
                     <div className="h-16 w-16 bg-muted rounded flex items-center justify-center">
                       <Paperclip className="h-6 w-6" />
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">{selectedFile.name}</p>
+                    <p className="text-sm font-semibold truncate">
+                      {selectedFile.name}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       {(selectedFile.size / 1024).toFixed(1)} KB
                     </p>
                   </div>
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={removeFile}
-                  >
+                  <Button variant="ghost" size="icon" onClick={removeFile}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -1699,8 +2025,8 @@ export default function Bakaiti() {
                   onChange={handleFileSelect}
                   className="hidden"
                 />
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="icon"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading}
@@ -1708,8 +2034,8 @@ export default function Bakaiti() {
                 >
                   <Paperclip className="h-5 w-5" />
                 </Button>
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="icon"
                   onClick={() => {
                     if (showGifPicker) {
@@ -1739,11 +2065,13 @@ export default function Bakaiti() {
                   className="flex-1 border-0 bg-secondary rounded-full"
                   disabled={isUploading}
                 />
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="icon"
                   onClick={sendMessage}
-                  disabled={(!messageText.trim() && !selectedFile) || isUploading}
+                  disabled={
+                    (!messageText.trim() && !selectedFile) || isUploading
+                  }
                 >
                   {isUploading ? (
                     <div className="h-5 w-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -1752,7 +2080,7 @@ export default function Bakaiti() {
                   )}
                 </Button>
               </div>
-              
+
               {/* Link Preview */}
               {(linkPreview || isLoadingPreview) && (
                 <div className="mt-3 p-3 bg-secondary rounded-lg">
@@ -1761,35 +2089,46 @@ export default function Bakaiti() {
                       <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                       <span className="text-sm">Loading preview...</span>
                     </div>
-                  ) : linkPreview && (
-                    <div className="flex gap-3">
-                      {linkPreview.image && (
-                        <img 
-                          src={linkPreview.image} 
-                          alt={linkPreview.title || 'Link preview'}
-                          className="w-16 h-16 object-cover rounded"
-                          onError={(e) => (e.currentTarget.style.display = 'none')}
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                          <ExternalLink className="h-3 w-3" />
-                          <span className="truncate">{linkPreview.siteName || new URL(linkPreview.url).hostname}</span>
-                        </div>
-                        <p className="font-semibold text-sm truncate">{linkPreview.title || linkPreview.url}</p>
-                        {linkPreview.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">{linkPreview.description}</p>
+                  ) : (
+                    linkPreview && (
+                      <div className="flex gap-3">
+                        {linkPreview.image && (
+                          <img
+                            src={linkPreview.image}
+                            alt={linkPreview.title || "Link preview"}
+                            className="w-16 h-16 object-cover rounded"
+                            onError={(e) =>
+                              (e.currentTarget.style.display = "none")
+                            }
+                          />
                         )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                            <ExternalLink className="h-3 w-3" />
+                            <span className="truncate">
+                              {linkPreview.siteName ||
+                                new URL(linkPreview.url).hostname}
+                            </span>
+                          </div>
+                          <p className="font-semibold text-sm truncate">
+                            {linkPreview.title || linkPreview.url}
+                          </p>
+                          {linkPreview.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {linkPreview.description}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 flex-shrink-0"
+                          onClick={() => setLinkPreview(null)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 flex-shrink-0"
-                        onClick={() => setLinkPreview(null)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    )
                   )}
                 </div>
               )}
@@ -1812,7 +2151,7 @@ export default function Bakaiti() {
 
       {/* Image Preview Modal */}
       {imagePreview && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
           onClick={() => setImagePreview(null)}
         >
@@ -1824,8 +2163,8 @@ export default function Bakaiti() {
           >
             <X className="h-6 w-6" />
           </Button>
-          <img 
-            src={imagePreview} 
+          <img
+            src={imagePreview}
             alt="Full size preview"
             className="max-w-full max-h-full object-contain"
             onClick={(e) => e.stopPropagation()}
@@ -1835,14 +2174,14 @@ export default function Bakaiti() {
 
       {/* Forward Message Dialog */}
       {showForwardDialog && messageToForward && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
           onClick={() => {
             setShowForwardDialog(false);
             setMessageToForward(null);
           }}
         >
-          <div 
+          <div
             className="bg-background rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1878,17 +2217,20 @@ export default function Bakaiti() {
             <div className="px-4 py-3 bg-secondary/50 border-b border-border">
               <p className="text-xs text-muted-foreground mb-1">Forwarding:</p>
               <div className="bg-background rounded-lg p-2 text-sm">
-                {messageToForward.fileUrl && messageToForward.fileType?.startsWith('image/') && (
-                  <img 
-                    src={messageToForward.fileUrl} 
-                    alt="Preview" 
-                    className="w-16 h-16 object-cover rounded mb-1"
-                  />
-                )}
+                {messageToForward.fileUrl &&
+                  messageToForward.fileType?.startsWith("image/") && (
+                    <img
+                      src={messageToForward.fileUrl}
+                      alt="Preview"
+                      className="w-16 h-16 object-cover rounded mb-1"
+                    />
+                  )}
                 {messageToForward.text ? (
                   <p className="truncate">{messageToForward.text}</p>
                 ) : messageToForward.fileUrl ? (
-                  <p className="text-muted-foreground">📎 {messageToForward.fileName || 'File'}</p>
+                  <p className="text-muted-foreground">
+                    📎 {messageToForward.fileName || "File"}
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -1908,13 +2250,20 @@ export default function Bakaiti() {
                     disabled={isForwarding}
                   >
                     <Avatar className="h-12 w-12">
-                      <AvatarImage src={chat.otherUserAvatar} alt={chat.otherUsername} />
-                      <AvatarFallback>{chat.otherUsername[0].toUpperCase()}</AvatarFallback>
+                      <AvatarImage
+                        src={chat.otherUserAvatar}
+                        alt={chat.otherUsername}
+                      />
+                      <AvatarFallback>
+                        {chat.otherUsername[0].toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 text-left">
-                      <p className="font-semibold text-sm">{chat.otherUsername}</p>
+                      <p className="font-semibold text-sm">
+                        {chat.otherUsername}
+                      </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {chat.lastMessage || 'Start a conversation'}
+                        {chat.lastMessage || "Start a conversation"}
                       </p>
                     </div>
                     {isForwarding && (

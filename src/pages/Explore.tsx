@@ -5,7 +5,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { getDatabase, ref, get } from "firebase/database";
 
-
 export default function Explore() {
   const { user } = useAuth();
   const [posts, setPosts] = useState<any[]>([]);
@@ -18,42 +17,55 @@ export default function Explore() {
   useEffect(() => {
     const fetchPublicPosts = async () => {
       if (!user) return;
-      
+
       try {
         const db = getDatabase();
-        
+
         // Get all users to check privacy settings
-        const usersRef = ref(db, 'users');
+        const usersRef = ref(db, "users");
         const usersSnapshot = await get(usersRef);
         const usersData = usersSnapshot.exists() ? usersSnapshot.val() : {};
-        
+
         // Fetch all posts from Realtime Database
-        const postsRef = ref(db, 'posts');
+        const postsRef = ref(db, "posts");
         const postsSnapshot = await get(postsRef);
-        
+
         let allPostsArray: any[] = [];
-        
+
         if (postsSnapshot.exists()) {
           const allPosts = postsSnapshot.val();
           allPostsArray = Object.entries(allPosts)
             .map(([id, post]: [string, any]) => ({
               id,
-              ...post
+              ...post,
             }))
             .sort((a: any, b: any) => b.createdAt - a.createdAt);
         }
-        
-        // Filter only public posts
-        const publicPosts = allPostsArray
-          .filter((post: any) => {
-            const postUserId = post.userId;
-            const userData = usersData[postUserId];
-            const isPrivate = userData?.accountPrivacy === 'private';
-            
-            // Show only public posts
-            return !isPrivate;
-          });
-        
+
+        const isVideoPost = (post: any) => {
+          if (post.mediaType === "video" || post.postType === "reel")
+            return true;
+          const mediaUrl = (post.mediaUrl || "").toLowerCase();
+          return /\.(mp4|mov|webm)$/.test(mediaUrl);
+        };
+
+        const isMediaUrlValid = (post: any) => {
+          const mediaUrl = (post.mediaUrl || "").toString().trim();
+          if (!mediaUrl) return false;
+          if (mediaUrl.includes("supabase.co/storage")) return false;
+          return true;
+        };
+
+        // Filter only public posts and remove videos from grid
+        const publicPosts = allPostsArray.filter((post: any) => {
+          const postUserId = post.userId;
+          const userData = usersData[postUserId];
+          const isPrivate = userData?.accountPrivacy === "private";
+
+          // Show only public posts
+          return !isPrivate && !isVideoPost(post) && isMediaUrlValid(post);
+        });
+
         setAllPostsData(publicPosts);
         setHasMorePosts(publicPosts.length > displayedCount);
         setPosts(publicPosts.slice(0, displayedCount));
@@ -78,25 +90,28 @@ export default function Explore() {
     if (isLoadingMore || !hasMorePosts) return;
     setIsLoadingMore(true);
     setTimeout(() => {
-      setDisplayedCount(prev => prev + 12);
+      setDisplayedCount((prev) => prev + 12);
       setIsLoadingMore(false);
     }, 200);
   }, [isLoadingMore, hasMorePosts]);
 
   // Infinite scroll observer
   const observerRef = useRef<IntersectionObserver | null>(null);
-  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
-    if (isLoadingMore) return;
-    if (observerRef.current) observerRef.current.disconnect();
-    
-    observerRef.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMorePosts) {
-        loadMorePosts();
-      }
-    });
-    
-    if (node) observerRef.current.observe(node);
-  }, [isLoadingMore, hasMorePosts, loadMorePosts]);
+  const loadMoreRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (isLoadingMore) return;
+      if (observerRef.current) observerRef.current.disconnect();
+
+      observerRef.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMorePosts) {
+          loadMorePosts();
+        }
+      });
+
+      if (node) observerRef.current.observe(node);
+    },
+    [isLoadingMore, hasMorePosts, loadMorePosts],
+  );
 
   return (
     <div className="min-h-screen">
@@ -117,16 +132,28 @@ export default function Explore() {
       <Tabs defaultValue="all" className="w-full">
         <div className="border-b border-border">
           <TabsList className="w-full max-w-6xl mx-auto h-12 bg-transparent rounded-none px-4">
-            <TabsTrigger value="all" className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none">
+            <TabsTrigger
+              value="all"
+              className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none"
+            >
               All
             </TabsTrigger>
-            <TabsTrigger value="reels" className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none">
+            <TabsTrigger
+              value="reels"
+              className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none"
+            >
               Timepass
             </TabsTrigger>
-            <TabsTrigger value="igtv" className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none">
+            <TabsTrigger
+              value="igtv"
+              className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none"
+            >
               Videos
             </TabsTrigger>
-            <TabsTrigger value="shop" className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none">
+            <TabsTrigger
+              value="shop"
+              className="data-[state=active]:border-b-2 data-[state=active]:border-b-foreground rounded-none"
+            >
               Shop
             </TabsTrigger>
           </TabsList>
@@ -152,12 +179,19 @@ export default function Explore() {
                     key={post.id}
                     className="aspect-square bg-muted hover:opacity-80 cursor-pointer transition-opacity relative group"
                   >
-                    {post.mediaType === 'video' ? (
-                      <video src={post.mediaUrl} className="w-full h-full object-cover" />
+                    {post.mediaType === "video" ? (
+                      <video
+                        src={post.mediaUrl}
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
-                      <img src={post.mediaUrl} alt={post.caption || 'Post'} className="w-full h-full object-cover" />
+                      <img
+                        src={post.mediaUrl}
+                        alt={post.caption || "Post"}
+                        className="w-full h-full object-cover"
+                      />
                     )}
-                    {post.mediaType === 'video' && (
+                    {post.mediaType === "video" && (
                       <div className="absolute top-2 right-2">
                         <Video className="h-5 w-5 text-white drop-shadow-lg" />
                       </div>

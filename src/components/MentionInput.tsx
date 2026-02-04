@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, forwardRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { getDatabase, ref, get } from "firebase/database";
+import { getDatabase, ref as dbRef, get } from "firebase/database";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface User {
@@ -21,7 +21,10 @@ interface MentionInputProps {
 }
 
 export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
-  ({ value, onChange, onKeyPress, placeholder, className, disabled }, ref) => {
+  (
+    { value, onChange, onKeyPress, placeholder, className, disabled },
+    inputRef,
+  ) => {
     const { user } = useAuth();
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestions, setSuggestions] = useState<User[]>([]);
@@ -35,54 +38,65 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
     useEffect(() => {
       const fetchActiveUsers = async () => {
         if (!user) return;
-        
+
         try {
           const db = getDatabase();
-          const usersMap = new Map<string, User & { interactionScore: number }>();
-          
+          const usersMap = new Map<
+            string,
+            User & { interactionScore: number }
+          >();
+
           // Get all users data first
-          const usersRef = ref(db, "users");
+          const usersRef = dbRef(db, "users");
           const usersSnapshot = await get(usersRef);
-          const allUsersData = usersSnapshot.exists() ? usersSnapshot.val() : {};
-          
+          const allUsersData = usersSnapshot.exists()
+            ? usersSnapshot.val()
+            : {};
+
           // Fetch followers (people who follow current user)
-          const followersRef = ref(db, `followers/${user.uid}`);
+          const followersRef = dbRef(db, `followers/${user.uid}`);
           const followersSnapshot = await get(followersRef);
           if (followersSnapshot.exists()) {
             const followers = followersSnapshot.val();
-            Object.keys(followers).forEach(uid => {
+            Object.keys(followers).forEach((uid) => {
               if (uid !== user.uid && allUsersData[uid]) {
                 const userData = allUsersData[uid];
                 usersMap.set(uid, {
                   uid,
                   username: userData.username || "user",
-                  photoURL: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-                  interactionScore: (usersMap.get(uid)?.interactionScore || 0) + 2
+                  photoURL:
+                    userData.photoURL ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+                  interactionScore:
+                    (usersMap.get(uid)?.interactionScore || 0) + 2,
                 });
               }
             });
           }
-          
+
           // Fetch following (people current user follows)
-          const followingRef = ref(db, `following/${user.uid}`);
+          const followingRef = dbRef(db, `following/${user.uid}`);
           const followingSnapshot = await get(followingRef);
           if (followingSnapshot.exists()) {
             const following = followingSnapshot.val();
-            Object.keys(following).forEach(uid => {
+            Object.keys(following).forEach((uid) => {
               if (uid !== user.uid && allUsersData[uid]) {
                 const userData = allUsersData[uid];
                 usersMap.set(uid, {
                   uid,
                   username: userData.username || "user",
-                  photoURL: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-                  interactionScore: (usersMap.get(uid)?.interactionScore || 0) + 2
+                  photoURL:
+                    userData.photoURL ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+                  interactionScore:
+                    (usersMap.get(uid)?.interactionScore || 0) + 2,
                 });
               }
             });
           }
-          
+
           // Fetch recent chats for higher interaction score
-          const chatsRef = ref(db, `userChats/${user.uid}`);
+          const chatsRef = dbRef(db, `userChats/${user.uid}`);
           const chatsSnapshot = await get(chatsRef);
           if (chatsSnapshot.exists()) {
             const chats = chatsSnapshot.val();
@@ -93,18 +107,23 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
                 usersMap.set(uid, {
                   uid,
                   username: userData.username || chat.otherUsername || "user",
-                  photoURL: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-                  interactionScore: (usersMap.get(uid)?.interactionScore || 0) + 3
+                  photoURL:
+                    userData.photoURL ||
+                    `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+                  interactionScore:
+                    (usersMap.get(uid)?.interactionScore || 0) + 3,
                 });
               }
             });
           }
-          
+
           // Sort by interaction score and take top 15
           const sortedUsers = Array.from(usersMap.values())
-            .sort((a, b) => (b.interactionScore || 0) - (a.interactionScore || 0))
+            .sort(
+              (a, b) => (b.interactionScore || 0) - (a.interactionScore || 0),
+            )
             .slice(0, 15);
-          
+
           setActiveUsers(sortedUsers);
         } catch (error) {
           console.error("Error fetching active users:", error);
@@ -116,9 +135,8 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
 
     // Detect @ mentions while typing
     useEffect(() => {
-      const cursorPosition = (
-        document.activeElement as HTMLInputElement
-      )?.selectionStart;
+      const cursorPosition = (document.activeElement as HTMLInputElement)
+        ?.selectionStart;
       if (cursorPosition === null || cursorPosition === undefined) return;
 
       // Find the @ symbol before cursor
@@ -135,7 +153,7 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
           // Filter active users based on query - show all if just @ typed
           const filtered = activeUsers
             .filter((u) =>
-              u.username.toLowerCase().includes(textAfterAt.toLowerCase())
+              u.username.toLowerCase().includes(textAfterAt.toLowerCase()),
             )
             .slice(0, 10);
 
@@ -157,7 +175,7 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
 
       const beforeMention = value.slice(0, mentionStartIndex);
       const afterMention = value.slice(
-        mentionStartIndex + mentionQuery.length + 1
+        mentionStartIndex + mentionQuery.length + 1,
       );
       const newValue = `${beforeMention}@${user.username} ${afterMention}`;
 
@@ -173,7 +191,7 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((prev) =>
-          prev < suggestions.length - 1 ? prev + 1 : prev
+          prev < suggestions.length - 1 ? prev + 1 : prev,
         );
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
@@ -189,7 +207,7 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
     return (
       <div ref={containerRef} className="relative flex-1">
         <Input
-          ref={ref}
+          ref={inputRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -226,7 +244,9 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium">{u.username}</span>
                     {u.interactionScore && u.interactionScore >= 5 && (
-                      <div className="text-xs text-muted-foreground">Frequent contact</div>
+                      <div className="text-xs text-muted-foreground">
+                        Frequent contact
+                      </div>
                     )}
                   </div>
                 </div>
@@ -236,7 +256,7 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
         )}
       </div>
     );
-  }
+  },
 );
 
 MentionInput.displayName = "MentionInput";

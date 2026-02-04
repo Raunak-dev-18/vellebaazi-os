@@ -47,7 +47,7 @@ A modern, Instagram-inspired social media platform built with React, TypeScript,
 | **State Management** | React Query, React Context |
 | **Authentication** | Firebase Auth |
 | **Database** | Firebase Realtime Database |
-| **Storage** | Supabase S3 (AWS SDK) |
+| **Storage** | Storage API (skyflare.sh) |
 | **AI** | Google Gemini API |
 | **Routing** | React Router v6 |
 
@@ -66,7 +66,7 @@ src/
 ├── hooks/              # Custom React hooks
 ├── lib/
 │   ├── firebase.ts     # Firebase configuration
-│   ├── supabase.ts     # Supabase S3 storage
+│   ├── storage.ts      # Storage API client
 │   ├── ai.ts           # Gemini AI integration
 │   └── utils.ts        # Utility functions
 ├── pages/
@@ -86,7 +86,7 @@ src/
 ### Prerequisites
 - Node.js 18+ or Bun
 - Firebase project with Realtime Database enabled
-- Supabase project with S3 storage configured
+- Storage API bucket configured
 - (Optional) Google Gemini API key for AI features
 - (Optional) Giphy API key for GIF support
 
@@ -114,11 +114,10 @@ src/
 
    Required variables:
    ```env
-   # Supabase S3 Configuration (for media storage)
-   VITE_SUPABASE_PROJECT_REF=your_project_ref
-   VITE_SUPABASE_REGION=your_region
-   VITE_SUPABASE_ACCESS_KEY_ID=your_access_key
-   VITE_SUPABASE_SECRET_ACCESS_KEY=your_secret_key
+   # Storage API Configuration
+   VITE_STORAGE_API_BASE_URL=https://storageapis.skyflare.sh/v2
+   VITE_STORAGE_API_TOKEN=your_storage_api_token
+   VITE_STORAGE_BUCKET_ID=your_bucket_id
 
    # Optional: Google Gemini API (for @cognix AI assistant)
    VITE_GEMINI_API_KEY=your_gemini_api_key
@@ -220,3 +219,6 @@ This project is open source and available under the [MIT License](LICENSE).
 ---
 
 Made with ❤️ by the Velle Baazi team
+
+
+

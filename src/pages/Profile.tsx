@@ -1,4 +1,15 @@
-import { Settings, Grid, Bookmark, ChevronDown, LogOut, Plus, Image as ImageIcon, Video, Trash2, Check } from "lucide-react";
+import {
+  Settings,
+  Grid,
+  Bookmark,
+  ChevronDown,
+  LogOut,
+  Plus,
+  Image as ImageIcon,
+  Video,
+  Trash2,
+  Check,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -24,9 +35,37 @@ import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { getDatabase, ref, update, get, remove } from "firebase/database";
 import { Input } from "@/components/ui/input";
-import { uploadToS3, deleteFromS3 } from "@/lib/supabase";
+import { uploadToStorage, deleteFromStorage } from "@/lib/storage";
 import { push, set } from "firebase/database";
 import { MentionTextarea } from "@/components/MentionTextarea";
+
+interface UserListItem {
+  uid: string;
+  username: string;
+  avatar: string;
+}
+
+interface PostRecord {
+  id: string;
+  userId: string;
+  createdAt: number;
+  mediaType?: string;
+  mediaUrl?: string;
+  caption?: string;
+  userAvatar?: string;
+  username?: string;
+  likes?: number;
+  comments?: number;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isPostRecord = (value: unknown): value is Omit<PostRecord, "id"> =>
+  isRecord(value) && typeof value.userId === "string";
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "Something went wrong";
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -41,9 +80,9 @@ export default function Profile() {
   const [isSaving, setIsSaving] = useState(false);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
-  const [followersList, setFollowersList] = useState<any[]>([]);
-  const [followingList, setFollowingList] = useState<any[]>([]);
-  const [posts, setPosts] = useState<any[]>([]);
+  const [followersList, setFollowersList] = useState<UserListItem[]>([]);
+  const [followingList, setFollowingList] = useState<UserListItem[]>([]);
+  const [posts, setPosts] = useState<PostRecord[]>([]);
   const [postsCount, setPostsCount] = useState(0);
   const [isUploadingPost, setIsUploadingPost] = useState(false);
   const [postCaption, setPostCaption] = useState("");
@@ -52,57 +91,63 @@ export default function Profile() {
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [isDeletingPosts, setIsDeletingPosts] = useState(false);
-  const [allPostsData, setAllPostsData] = useState<any[]>([]);
+  const [allPostsData, setAllPostsData] = useState<PostRecord[]>([]);
   const [displayedCount, setDisplayedCount] = useState(12);
   const [hasMorePosts, setHasMorePosts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  const username = user?.displayName || user?.email?.split('@')[0] || 'user';
+  const username = user?.displayName || user?.email?.split("@")[0] || "user";
   const userInitials = username.substring(0, 2).toUpperCase();
 
   // Fetch user data on component mount
   useEffect(() => {
     const fetchUserData = async () => {
       if (!user) return;
-      
+
       try {
         const db = getDatabase();
-        
+
         // Fetch bio
         const userRef = ref(db, `users/${user.uid}`);
         const snapshot = await get(userRef);
-        
+
         if (snapshot.exists()) {
           const userData = snapshot.val();
           setBio(userData.bio || "");
         }
-        
+
         // Fetch followers count
         const followersRef = ref(db, `followers/${user.uid}`);
         const followersSnapshot = await get(followersRef);
-        const followersCount = followersSnapshot.exists() ? Object.keys(followersSnapshot.val()).length : 0;
+        const followersCount = followersSnapshot.exists()
+          ? Object.keys(followersSnapshot.val()).length
+          : 0;
         setFollowersCount(followersCount);
-        
+
         // Fetch following count
         const followingRef = ref(db, `following/${user.uid}`);
         const followingSnapshot = await get(followingRef);
-        const followingCount = followingSnapshot.exists() ? Object.keys(followingSnapshot.val()).length : 0;
+        const followingCount = followingSnapshot.exists()
+          ? Object.keys(followingSnapshot.val()).length
+          : 0;
         setFollowingCount(followingCount);
 
         // Fetch posts from Realtime Database
-        const postsRef = ref(db, 'posts');
+        const postsRef = ref(db, "posts");
         const postsSnapshot = await get(postsRef);
-        
+
         if (postsSnapshot.exists()) {
-          const allPosts = postsSnapshot.val();
+          const allPosts = postsSnapshot.val() as Record<string, unknown>;
           const userPosts = Object.entries(allPosts)
-            .filter(([_, post]: [string, any]) => post.userId === user.uid)
-            .map(([id, post]: [string, any]) => ({
+            .filter(
+              ([, post]) => isPostRecord(post) && post.userId === user.uid,
+            )
+            .map(([id, post]) => ({
               id,
-              ...post
+              ...(post as Omit<PostRecord, "id">),
             }))
-            .sort((a: any, b: any) => b.createdAt - a.createdAt);
-          
+            .sort((a, b) => b.createdAt - a.createdAt);
+
           setAllPostsData(userPosts);
           setHasMorePosts(userPosts.length > displayedCount);
           setPosts(userPosts.slice(0, displayedCount));
@@ -132,32 +177,34 @@ export default function Profile() {
     if (isLoadingMore || !hasMorePosts) return;
     setIsLoadingMore(true);
     setTimeout(() => {
-      setDisplayedCount(prev => prev + 12);
+      setDisplayedCount((prev) => prev + 12);
       setIsLoadingMore(false);
     }, 200);
   };
 
   const fetchFollowersList = async () => {
     if (!user) return;
-    
+
     try {
       const db = getDatabase();
       const followersRef = ref(db, `followers/${user.uid}`);
       const snapshot = await get(followersRef);
-      
+
       if (snapshot.exists()) {
         const followersData = snapshot.val();
-        const usersRef = ref(db, 'users');
+        const usersRef = ref(db, "users");
         const usersSnapshot = await get(usersRef);
-        
+
         if (usersSnapshot.exists()) {
           const usersData = usersSnapshot.val();
-          const followersList = Object.keys(followersData).map(uid => {
+          const followersList = Object.keys(followersData).map((uid) => {
             const userData = usersData[uid];
             return {
               uid,
-              username: userData?.username || 'user',
-              avatar: userData?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`
+              username: userData?.username || "user",
+              avatar:
+                userData?.photoURL ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
             };
           });
           setFollowersList(followersList);
@@ -173,25 +220,27 @@ export default function Profile() {
 
   const fetchFollowingList = async () => {
     if (!user) return;
-    
+
     try {
       const db = getDatabase();
       const followingRef = ref(db, `following/${user.uid}`);
       const snapshot = await get(followingRef);
-      
+
       if (snapshot.exists()) {
         const followingData = snapshot.val();
-        const usersRef = ref(db, 'users');
+        const usersRef = ref(db, "users");
         const usersSnapshot = await get(usersRef);
-        
+
         if (usersSnapshot.exists()) {
           const usersData = usersSnapshot.val();
-          const followingList = Object.keys(followingData).map(uid => {
+          const followingList = Object.keys(followingData).map((uid) => {
             const userData = usersData[uid];
             return {
               uid,
-              username: userData?.username || 'user',
-              avatar: userData?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`
+              username: userData?.username || "user",
+              avatar:
+                userData?.photoURL ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
             };
           });
           setFollowingList(followingList);
@@ -213,10 +262,10 @@ export default function Profile() {
         description: "You have been successfully logged out",
       });
       navigate("/login");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to log out",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     }
@@ -229,27 +278,27 @@ export default function Profile() {
 
   const handleSaveBio = async () => {
     if (!user) return;
-    
+
     setIsSaving(true);
     try {
       const db = getDatabase();
       const userRef = ref(db, `users/${user.uid}`);
-      
+
       await update(userRef, {
-        bio: editBio
+        bio: editBio,
       });
-      
+
       setBio(editBio);
       setIsEditDialogOpen(false);
-      
+
       toast({
         title: "Profile Updated",
         description: "Your bio has been updated successfully",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update bio",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -262,17 +311,26 @@ export default function Profile() {
     if (!file) return;
 
     // Validate file type - images and videos
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'];
+    const validTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "video/mp4",
+      "video/quicktime",
+      "video/webm",
+    ];
     if (!validTypes.includes(file.type)) {
       toast({
         title: "Invalid File Type",
-        description: "Please select an image (JPG, PNG, GIF) or video (MP4, MOV, WEBM)",
+        description:
+          "Please select an image (JPG, PNG, GIF) or video (MP4, MOV, WEBM)",
         variant: "destructive",
       });
       return;
     }
 
-    // Validate file size (max 50MB for Supabase storage)
+    // Validate file size (max 50MB for Storage API storage)
     if (file.size > 50 * 1024 * 1024) {
       toast({
         title: "File Too Large",
@@ -292,25 +350,29 @@ export default function Profile() {
     setIsUploadingPost(true);
     try {
       const db = getDatabase();
-      
+
       // Generate unique filename
-      const fileExtension = selectedFile.name.split('.').pop();
+      const fileExtension = selectedFile.name.split(".").pop();
       const fileName = `${user.uid}/${Date.now()}.${fileExtension}`;
 
-      // Upload file to Supabase S3 Storage
-      const mediaUrl = await uploadToS3(selectedFile, fileName);
+      // Upload file to Storage API
+      const mediaUrl = await uploadToStorage(selectedFile, fileName);
 
       // Determine media type
-      const mediaType = selectedFile.type.startsWith('video/') ? 'video' : 'image';
+      const mediaType = selectedFile.type.startsWith("video/")
+        ? "video"
+        : "image";
 
       // Create post in Realtime Database
-      const postsRef = ref(db, 'posts');
+      const postsRef = ref(db, "posts");
       const newPostRef = push(postsRef);
-      
+
       await set(newPostRef, {
         userId: user.uid,
-        username: user.displayName || user.email?.split('@')[0] || 'user',
-        userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+        username: user.displayName || user.email?.split("@")[0] || "user",
+        userAvatar:
+          user.photoURL ||
+          `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
         mediaUrl: mediaUrl,
         mediaType: mediaType,
         caption: postCaption.trim(),
@@ -327,10 +389,10 @@ export default function Profile() {
           .filter(([_, post]: [string, any]) => post.userId === user.uid)
           .map(([id, post]: [string, any]) => ({
             id,
-            ...post
+            ...post,
           }))
-          .sort((a: any, b: any) => b.createdAt - a.createdAt);
-        
+          .sort((a, b) => b.createdAt - a.createdAt);
+
         setPosts(userPosts);
         setPostsCount(userPosts.length);
       }
@@ -345,11 +407,11 @@ export default function Profile() {
         title: "Post Created",
         description: "Your post has been published successfully",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error creating post:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to create post",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -358,7 +420,7 @@ export default function Profile() {
   };
 
   const togglePostSelection = (postId: string) => {
-    setSelectedPosts(prev => {
+    setSelectedPosts((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
         newSet.delete(postId);
@@ -375,56 +437,46 @@ export default function Profile() {
     setIsDeletingPosts(true);
     try {
       const db = getDatabase();
-      
+
       // Delete each selected post
       for (const postId of selectedPosts) {
         // Get post data to extract media URL
         const postRef = ref(db, `posts/${postId}`);
         const postSnapshot = await get(postRef);
-        
+
         if (postSnapshot.exists()) {
           const postData = postSnapshot.val();
-          
-          // Extract filename from mediaUrl
-          // URL format: https://PROJECT_REF.storage.supabase.co/storage/v1/object/public/BUCKET/FILENAME
+
+          // Delete file from storage (if present)
           if (postData.mediaUrl) {
             try {
-              const url = new URL(postData.mediaUrl);
-              const pathParts = url.pathname.split('/');
-              // Get everything after 'public/BUCKET/'
-              const bucketIndex = pathParts.indexOf('public');
-              if (bucketIndex !== -1 && bucketIndex + 2 < pathParts.length) {
-                const fileName = pathParts.slice(bucketIndex + 2).join('/');
-                
-                // Delete from S3
-                await deleteFromS3(fileName);
-                console.log(`Deleted file from S3: ${fileName}`);
-              }
-            } catch (s3Error) {
-              console.error("Error deleting from S3:", s3Error);
-              // Continue with database deletion even if S3 deletion fails
+              await deleteFromStorage(postData.mediaUrl);
+              console.log(`Deleted file from storage: ${postData.mediaUrl}`);
+            } catch (storageError) {
+              console.error("Error deleting from storage:", storageError);
+              // Continue with database deletion even if storage deletion fails
             }
           }
-          
+
           // Delete from database
           await remove(postRef);
         }
       }
 
       // Refresh posts
-      const postsRef = ref(db, 'posts');
+      const postsRef = ref(db, "posts");
       const postsSnapshot = await get(postsRef);
-      
+
       if (postsSnapshot.exists()) {
-        const allPosts = postsSnapshot.val();
+        const allPosts = postsSnapshot.val() as Record<string, unknown>;
         const userPosts = Object.entries(allPosts)
-          .filter(([_, post]: [string, any]) => post.userId === user.uid)
-          .map(([id, post]: [string, any]) => ({
+          .filter(([, post]) => isPostRecord(post) && post.userId === user.uid)
+          .map(([id, post]) => ({
             id,
-            ...post
+            ...(post as Omit<PostRecord, "id">),
           }))
-          .sort((a: any, b: any) => b.createdAt - a.createdAt);
-        
+          .sort((a, b) => b.createdAt - a.createdAt);
+
         setPosts(userPosts);
         setPostsCount(userPosts.length);
       } else {
@@ -438,13 +490,13 @@ export default function Profile() {
 
       toast({
         title: "Posts Deleted",
-        description: `Successfully deleted ${selectedPosts.size} post${selectedPosts.size > 1 ? 's' : ''} and their media files`,
+        description: `Successfully deleted ${selectedPosts.size} post${selectedPosts.size > 1 ? "s" : ""} and their media files`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error deleting posts:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to delete posts",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -454,35 +506,35 @@ export default function Profile() {
 
   const handleCleanupSelfFollows = async () => {
     if (!user) return;
-    
+
     try {
       const db = getDatabase();
       let cleanedItems = 0;
-      
+
       // Remove self from following list
       const followingRef = ref(db, `following/${user.uid}/${user.uid}`);
       const followingSnapshot = await get(followingRef);
-      
+
       if (followingSnapshot.exists()) {
         await remove(followingRef);
         console.log("Removed self from following list");
         cleanedItems++;
       }
-      
+
       // Remove self from followers list
       const followersRef = ref(db, `followers/${user.uid}/${user.uid}`);
       const followersSnapshot = await get(followersRef);
-      
+
       if (followersSnapshot.exists()) {
         await remove(followersRef);
         console.log("Removed self from followers list");
         cleanedItems++;
       }
-      
+
       // Remove self-chats
       const chatsRef = ref(db, `userChats/${user.uid}`);
       const chatsSnapshot = await get(chatsRef);
-      
+
       if (chatsSnapshot.exists()) {
         const chatsData = chatsSnapshot.val();
         for (const chatId in chatsData) {
@@ -494,26 +546,30 @@ export default function Profile() {
           }
         }
       }
-      
+
       // Refresh counts
       const followersRefresh = ref(db, `followers/${user.uid}`);
       const followersRefreshSnapshot = await get(followersRefresh);
-      const newFollowersCount = followersRefreshSnapshot.exists() ? Object.keys(followersRefreshSnapshot.val()).length : 0;
+      const newFollowersCount = followersRefreshSnapshot.exists()
+        ? Object.keys(followersRefreshSnapshot.val()).length
+        : 0;
       setFollowersCount(newFollowersCount);
-      
+
       const followingRefresh = ref(db, `following/${user.uid}`);
       const followingRefreshSnapshot = await get(followingRefresh);
-      const newFollowingCount = followingRefreshSnapshot.exists() ? Object.keys(followingRefreshSnapshot.val()).length : 0;
+      const newFollowingCount = followingRefreshSnapshot.exists()
+        ? Object.keys(followingRefreshSnapshot.val()).length
+        : 0;
       setFollowingCount(newFollowingCount);
-      
+
       toast({
         title: "Cleanup Complete",
         description: `Removed ${cleanedItems} invalid entries from your profile`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to cleanup",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     }
@@ -532,7 +588,10 @@ export default function Profile() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-48">
-              <DropdownMenuItem onClick={handleLogout} className="text-destructive cursor-pointer">
+              <DropdownMenuItem
+                onClick={handleLogout}
+                className="text-destructive cursor-pointer"
+              >
                 <LogOut className="mr-2 h-4 w-4" />
                 Log Out
               </DropdownMenuItem>
@@ -545,10 +604,16 @@ export default function Profile() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={() => navigate('/settings')} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={() => navigate("/settings")}
+                className="cursor-pointer"
+              >
                 Settings
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleCleanupSelfFollows} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={handleCleanupSelfFollows}
+                className="cursor-pointer"
+              >
                 Clean Up Profile Data
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -558,7 +623,13 @@ export default function Profile() {
         {/* Profile Info */}
         <div className="flex gap-8 mb-6">
           <Avatar className="h-24 w-24 border-2 border-border">
-            <AvatarImage src={user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`} alt="Profile" />
+            <AvatarImage
+              src={
+                user?.photoURL ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
+              }
+              alt="Profile"
+            />
             <AvatarFallback>{userInitials}</AvatarFallback>
           </Avatar>
 
@@ -568,14 +639,14 @@ export default function Profile() {
                 <p className="font-semibold text-lg">{postsCount}</p>
                 <p className="text-sm text-muted-foreground">posts</p>
               </div>
-              <div 
+              <div
                 className="text-center cursor-pointer hover:text-muted-foreground transition-colors"
                 onClick={fetchFollowersList}
               >
                 <p className="font-semibold text-lg">{followersCount}</p>
                 <p className="text-sm text-muted-foreground">followers</p>
               </div>
-              <div 
+              <div
                 className="text-center cursor-pointer hover:text-muted-foreground transition-colors"
                 onClick={fetchFollowingList}
               >
@@ -585,11 +656,15 @@ export default function Profile() {
             </div>
 
             <div className="flex gap-2">
-              <Button variant="secondary" className="flex-1" onClick={handleEditProfile}>
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={handleEditProfile}
+              >
                 Edit Profile
               </Button>
-              <Button 
-                variant="default" 
+              <Button
+                variant="default"
                 className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
                 onClick={() => setIsCreatePostDialogOpen(true)}
               >
@@ -608,7 +683,10 @@ export default function Profile() {
       </div>
 
       {/* Create Post Dialog */}
-      <Dialog open={isCreatePostDialogOpen} onOpenChange={setIsCreatePostDialogOpen}>
+      <Dialog
+        open={isCreatePostDialogOpen}
+        onOpenChange={setIsCreatePostDialogOpen}
+      >
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create New Post</DialogTitle>
@@ -632,7 +710,9 @@ export default function Profile() {
                       <ImageIcon className="h-12 w-12 text-muted-foreground" />
                       <Video className="h-12 w-12 text-muted-foreground" />
                     </div>
-                    <p className="text-lg font-semibold">Select photo or video</p>
+                    <p className="text-lg font-semibold">
+                      Select photo or video
+                    </p>
                     <p className="text-sm text-muted-foreground">
                       JPG, PNG, GIF, MP4, MOV, WEBM (max 50MB)
                     </p>
@@ -645,15 +725,15 @@ export default function Profile() {
             ) : (
               <div className="space-y-4">
                 <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
-                  {selectedFile.type.startsWith('video/') ? (
+                  {selectedFile.type.startsWith("video/") ? (
                     <video
-                      src={previewUrl || ''}
+                      src={previewUrl || ""}
                       controls
                       className="w-full h-full object-cover"
                     />
                   ) : (
                     <img
-                      src={previewUrl || ''}
+                      src={previewUrl || ""}
                       alt="Preview"
                       className="w-full h-full object-cover"
                     />
@@ -734,8 +814,8 @@ export default function Profile() {
             </div>
           </div>
           <DialogFooter>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => setIsEditDialogOpen(false)}
               disabled={isSaving}
             >
@@ -749,7 +829,10 @@ export default function Profile() {
       </Dialog>
 
       {/* Followers Dialog */}
-      <Dialog open={isFollowersDialogOpen} onOpenChange={setIsFollowersDialogOpen}>
+      <Dialog
+        open={isFollowersDialogOpen}
+        onOpenChange={setIsFollowersDialogOpen}
+      >
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle>Followers</DialogTitle>
@@ -762,8 +845,8 @@ export default function Profile() {
             ) : (
               <div className="space-y-3">
                 {followersList.map((follower) => (
-                  <div 
-                    key={follower.uid} 
+                  <div
+                    key={follower.uid}
                     className="flex items-center gap-3 p-2 hover:bg-secondary rounded-lg cursor-pointer transition-colors"
                     onClick={() => {
                       navigate(`/users/profile/${follower.username}`);
@@ -771,11 +854,18 @@ export default function Profile() {
                     }}
                   >
                     <Avatar className="h-12 w-12">
-                      <AvatarImage src={follower.avatar} alt={follower.username} />
-                      <AvatarFallback>{follower.username[0].toUpperCase()}</AvatarFallback>
+                      <AvatarImage
+                        src={follower.avatar}
+                        alt={follower.username}
+                      />
+                      <AvatarFallback>
+                        {follower.username[0].toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
-                      <p className="font-semibold text-sm">{follower.username}</p>
+                      <p className="font-semibold text-sm">
+                        {follower.username}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -786,7 +876,10 @@ export default function Profile() {
       </Dialog>
 
       {/* Following Dialog */}
-      <Dialog open={isFollowingDialogOpen} onOpenChange={setIsFollowingDialogOpen}>
+      <Dialog
+        open={isFollowingDialogOpen}
+        onOpenChange={setIsFollowingDialogOpen}
+      >
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle>Following</DialogTitle>
@@ -799,8 +892,8 @@ export default function Profile() {
             ) : (
               <div className="space-y-3">
                 {followingList.map((following) => (
-                  <div 
-                    key={following.uid} 
+                  <div
+                    key={following.uid}
                     className="flex items-center gap-3 p-2 hover:bg-secondary rounded-lg cursor-pointer transition-colors"
                     onClick={() => {
                       navigate(`/users/profile/${following.username}`);
@@ -808,11 +901,18 @@ export default function Profile() {
                     }}
                   >
                     <Avatar className="h-12 w-12">
-                      <AvatarImage src={following.avatar} alt={following.username} />
-                      <AvatarFallback>{following.username[0].toUpperCase()}</AvatarFallback>
+                      <AvatarImage
+                        src={following.avatar}
+                        alt={following.username}
+                      />
+                      <AvatarFallback>
+                        {following.username[0].toUpperCase()}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
-                      <p className="font-semibold text-sm">{following.username}</p>
+                      <p className="font-semibold text-sm">
+                        {following.username}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -825,11 +925,17 @@ export default function Profile() {
       {/* Tabs */}
       <Tabs defaultValue="posts" className="w-full">
         <TabsList className="w-full grid grid-cols-2 h-12 border-b border-border rounded-none bg-transparent">
-          <TabsTrigger value="posts" className="gap-2 data-[state=active]:border-t-2 data-[state=active]:border-t-foreground rounded-none">
+          <TabsTrigger
+            value="posts"
+            className="gap-2 data-[state=active]:border-t-2 data-[state=active]:border-t-foreground rounded-none"
+          >
             <Grid className="h-4 w-4" />
             <span className="hidden sm:inline">Posts</span>
           </TabsTrigger>
-          <TabsTrigger value="saved" className="gap-2 data-[state=active]:border-t-2 data-[state=active]:border-t-foreground rounded-none">
+          <TabsTrigger
+            value="saved"
+            className="gap-2 data-[state=active]:border-t-2 data-[state=active]:border-t-foreground rounded-none"
+          >
             <Bookmark className="h-4 w-4" />
             <span className="hidden sm:inline">Saved</span>
           </TabsTrigger>
@@ -885,7 +991,9 @@ export default function Profile() {
                       disabled={selectedPosts.size === 0 || isDeletingPosts}
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
-                      {isDeletingPosts ? "Deleting..." : `Delete (${selectedPosts.size})`}
+                      {isDeletingPosts
+                        ? "Deleting..."
+                        : `Delete (${selectedPosts.size})`}
                     </Button>
                   </div>
                 )}
@@ -898,7 +1006,7 @@ export default function Profile() {
                     className="relative aspect-square bg-muted cursor-pointer hover:opacity-80 transition-opacity"
                     onClick={() => isDeleteMode && togglePostSelection(post.id)}
                   >
-                    {post.mediaType === 'video' ? (
+                    {post.mediaType === "video" ? (
                       <video
                         src={post.mediaUrl}
                         className="w-full h-full object-cover"
@@ -906,22 +1014,24 @@ export default function Profile() {
                     ) : (
                       <img
                         src={post.mediaUrl}
-                        alt={post.caption || 'Post'}
+                        alt={post.caption || "Post"}
                         className="w-full h-full object-cover"
                       />
                     )}
-                    {post.mediaType === 'video' && !isDeleteMode && (
+                    {post.mediaType === "video" && !isDeleteMode && (
                       <div className="absolute top-2 right-2">
                         <Video className="h-5 w-5 text-white drop-shadow-lg" />
                       </div>
                     )}
                     {isDeleteMode && (
                       <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
-                          selectedPosts.has(post.id)
-                            ? 'bg-blue-500 border-blue-500'
-                            : 'bg-white/20 border-white'
-                        }`}>
+                        <div
+                          className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
+                            selectedPosts.has(post.id)
+                              ? "bg-blue-500 border-blue-500"
+                              : "bg-white/20 border-white"
+                          }`}
+                        >
                           {selectedPosts.has(post.id) && (
                             <Check className="h-5 w-5 text-white" />
                           )}
@@ -938,7 +1048,7 @@ export default function Profile() {
                     disabled={isLoadingMore}
                     className="px-6 py-2 bg-secondary hover:bg-secondary/80 rounded-lg text-sm font-medium transition-colors"
                   >
-                    {isLoadingMore ? 'Loading...' : 'Load More'}
+                    {isLoadingMore ? "Loading..." : "Load More"}
                   </button>
                 </div>
               )}
