@@ -10,7 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, X, ChevronLeft, ChevronRight } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getDatabase, ref, get, set, push, remove } from "firebase/database";
 import { uploadToStorage } from "@/lib/storage";
@@ -20,6 +20,16 @@ import { getSafeAvatarUrl } from "@/utils/media";
 
 interface Story {
   id: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  mediaUrl: string;
+  mediaType: "image" | "video";
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface StoryRecord {
   userId: string;
   username: string;
   userAvatar: string;
@@ -47,14 +57,7 @@ export function Stories() {
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
-  useEffect(() => {
-    fetchStories();
-    // Cleanup expired stories every minute
-    const interval = setInterval(cleanupExpiredStories, 60000);
-    return () => clearInterval(interval);
-  }, [user]);
-
-  const fetchStories = async () => {
+  const fetchStories = useCallback(async () => {
     if (!user) return;
 
     try {
@@ -63,25 +66,23 @@ export function Stories() {
       const snapshot = await get(storiesRef);
 
       if (snapshot.exists()) {
-        const allStories = snapshot.val();
+        const allStories = snapshot.val() as Record<string, StoryRecord>;
         const now = Date.now();
 
         // Group stories by user and filter expired ones
         const groupedStories: { [userId: string]: Story[] } = {};
 
-        Object.entries(allStories).forEach(
-          ([storyId, story]: [string, any]) => {
-            if (story.expiresAt > now) {
-              if (!groupedStories[story.userId]) {
-                groupedStories[story.userId] = [];
-              }
-              groupedStories[story.userId].push({
-                id: storyId,
-                ...story,
-              });
+        Object.entries(allStories).forEach(([storyId, story]) => {
+          if (story.expiresAt > now) {
+            if (!groupedStories[story.userId]) {
+              groupedStories[story.userId] = [];
             }
-          },
-        );
+            groupedStories[story.userId].push({
+              id: storyId,
+              ...story,
+            });
+          }
+        });
 
         // Sort stories by creation time
         Object.keys(groupedStories).forEach((userId) => {
@@ -107,7 +108,7 @@ export function Stories() {
     } catch (error) {
       console.error("Error fetching stories:", error);
     }
-  };
+  }, [user, displayedCount]);
 
   const loadMoreStories = () => {
     const userIds = Object.keys(stories);
@@ -122,30 +123,35 @@ export function Stories() {
     setHasMoreStories(userIds.length > newCount);
   };
 
-  const cleanupExpiredStories = async () => {
+  const cleanupExpiredStories = useCallback(async () => {
     try {
       const db = getDatabase();
       const storiesRef = ref(db, "stories");
       const snapshot = await get(storiesRef);
 
       if (snapshot.exists()) {
-        const allStories = snapshot.val();
+        const allStories = snapshot.val() as Record<string, StoryRecord>;
         const now = Date.now();
 
-        Object.entries(allStories).forEach(
-          async ([storyId, story]: [string, any]) => {
-            if (story.expiresAt <= now) {
-              await remove(ref(db, `stories/${storyId}`));
-            }
-          },
-        );
+        Object.entries(allStories).forEach(async ([storyId, story]) => {
+          if (story.expiresAt <= now) {
+            await remove(ref(db, `stories/${storyId}`));
+          }
+        });
 
         fetchStories();
       }
     } catch (error) {
       console.error("Error cleaning up stories:", error);
     }
-  };
+  }, [fetchStories]);
+
+  useEffect(() => {
+    fetchStories();
+    // Cleanup expired stories every minute
+    const interval = setInterval(cleanupExpiredStories, 60000);
+    return () => clearInterval(interval);
+  }, [fetchStories, cleanupExpiredStories]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -226,7 +232,7 @@ export function Stories() {
         title: "Story Posted",
         description: "Your story will be visible for 24 hours",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error uploading story:", error);
       toast({
         title: "Error",
@@ -284,7 +290,7 @@ export function Stories() {
           title: "Story Posted",
           description: "Your story will be visible for 24 hours",
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Error uploading story:", error);
         toast({
           title: "Error",
@@ -619,5 +625,3 @@ export function Stories() {
     </>
   );
 }
-
-

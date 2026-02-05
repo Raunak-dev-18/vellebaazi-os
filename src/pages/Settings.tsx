@@ -12,6 +12,23 @@ import { getDatabase, ref, update, get, remove } from "firebase/database";
 import { updateProfile } from "firebase/auth";
 import { uploadToStorage } from "@/lib/storage";
 
+interface UserRecord {
+  username?: string;
+  photoURL?: string;
+  accountPrivacy?: string;
+  gender?: string;
+}
+
+interface PostRecord {
+  userId: string;
+  mediaUrl?: string;
+}
+
+interface StoryRecord {
+  userId: string;
+  mediaUrl?: string;
+}
+
 export default function Settings() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -122,10 +139,10 @@ export default function Settings() {
       const postsSnapshot = await get(postsRef);
 
       if (postsSnapshot.exists()) {
-        const allPosts = postsSnapshot.val();
+        const allPosts = postsSnapshot.val() as Record<string, PostRecord>;
         const updatePromises = Object.entries(allPosts)
-          .filter(([_, post]: [string, any]) => post.userId === user.uid)
-          .map(([postId, _]: [string, any]) =>
+          .filter(([, post]) => post.userId === user.uid)
+          .map(([postId]) =>
             update(ref(db, `posts/${postId}`), { userAvatar: photoURL }),
           );
 
@@ -173,9 +190,9 @@ export default function Settings() {
       const usersSnapshot = await get(usersRef);
 
       if (usersSnapshot.exists()) {
-        const usersData = usersSnapshot.val();
+        const usersData = usersSnapshot.val() as Record<string, UserRecord>;
         const usernameTaken = Object.entries(usersData).some(
-          ([uid, data]: [string, any]) =>
+          ([uid, data]) =>
             uid !== user.uid && data.username === username.trim(),
         );
 
@@ -249,9 +266,9 @@ export default function Settings() {
       const postsRef = ref(db, "posts");
       const postsSnapshot = await get(postsRef);
       if (postsSnapshot.exists()) {
-        const allPosts = postsSnapshot.val();
+        const allPosts = postsSnapshot.val() as Record<string, PostRecord>;
         const legacyPosts = Object.entries(allPosts).filter(
-          ([_, post]: [string, any]) =>
+          ([, post]) =>
             post.userId === user.uid && isLegacyMediaUrl(post.mediaUrl),
         );
 
@@ -269,9 +286,9 @@ export default function Settings() {
       const storiesRef = ref(db, "stories");
       const storiesSnapshot = await get(storiesRef);
       if (storiesSnapshot.exists()) {
-        const allStories = storiesSnapshot.val();
+        const allStories = storiesSnapshot.val() as Record<string, StoryRecord>;
         const legacyStories = Object.entries(allStories).filter(
-          ([_, story]: [string, any]) =>
+          ([, story]) =>
             story.userId === user.uid && isLegacyMediaUrl(story.mediaUrl),
         );
 

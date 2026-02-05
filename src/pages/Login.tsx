@@ -18,15 +18,17 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [showUsernameDialog, setShowUsernameDialog] = useState(false);
   const [pendingGoogleAuth, setPendingGoogleAuth] = useState(false);
-  
+
   const { signIn, signUp, signInWithGoogle, saveUsername } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "An error occurred";
 
   const validatePassword = (pwd: string): boolean => {
     const alphabets = pwd.match(/[a-zA-Z]/g);
     const numbers = pwd.match(/[0-9]/g);
-    
+
     if (!alphabets || alphabets.length < 6) {
       toast({
         title: "Invalid Password",
@@ -35,7 +37,7 @@ export default function Login() {
       });
       return false;
     }
-    
+
     if (!numbers || numbers.length < 2) {
       toast({
         title: "Invalid Password",
@@ -44,13 +46,13 @@ export default function Login() {
       });
       return false;
     }
-    
+
     return true;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!isLogin) {
       if (!username.trim()) {
         toast({
@@ -60,12 +62,12 @@ export default function Login() {
         });
         return;
       }
-      
+
       if (!validatePassword(password)) {
         return;
       }
     }
-    
+
     setLoading(true);
 
     try {
@@ -84,10 +86,10 @@ export default function Login() {
         });
         navigate("/");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "An error occurred",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -99,7 +101,7 @@ export default function Login() {
     setLoading(true);
     try {
       const result = await signInWithGoogle();
-      
+
       // Check if user needs to set username (new user)
       if (result.isNewUser) {
         setPendingGoogleAuth(true);
@@ -112,10 +114,10 @@ export default function Login() {
         });
         navigate("/");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "An error occurred",
+        description: getErrorMessage(error),
         variant: "destructive",
       });
       setLoading(false);
@@ -132,10 +134,10 @@ export default function Login() {
         description: "Account created successfully!",
       });
       navigate("/");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to save username",
+        description: getErrorMessage(error) || "Failed to save username",
         variant: "destructive",
       });
     } finally {
@@ -151,10 +153,18 @@ export default function Login() {
         <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
           <div className="max-w-md text-center space-y-8">
             <div className="w-32 h-32 mx-auto flex items-center justify-center">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <div className="w-full">
-              <img src="/image.png" alt="Welcome" className="w-full h-auto object-contain" />
+              <img
+                src="/image.png"
+                alt="Welcome"
+                className="w-full h-auto object-contain"
+              />
             </div>
           </div>
         </div>
@@ -166,7 +176,11 @@ export default function Login() {
           {/* Logo for mobile */}
           <div className="lg:hidden text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 mb-4">
-              <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <h2 className="text-2xl font-bold">Vellebaazi</h2>
           </div>
@@ -177,17 +191,17 @@ export default function Login() {
               {isLogin ? "Sign in to your account" : "Create your account"}
             </h2>
             <p className="text-muted-foreground">
-              {isLogin 
-                ? "Enter your credentials to access your account" 
+              {isLogin
+                ? "Enter your credentials to access your account"
                 : "Join millions of people sharing their stories"}
             </p>
           </div>
 
           {/* Social Login Buttons */}
           <div className="space-y-3">
-            <Button 
-              variant="outline" 
-              className="w-full h-11" 
+            <Button
+              variant="outline"
+              className="w-full h-11"
               size="lg"
               onClick={handleGoogleSignIn}
               disabled={loading}
@@ -284,20 +298,22 @@ export default function Login() {
               )}
             </div>
 
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="w-full h-11 bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 hover:opacity-90 transition-opacity"
               size="lg"
               disabled={loading}
             >
-              {loading ? "Loading..." : (isLogin ? "Sign In" : "Create Account")}
+              {loading ? "Loading..." : isLogin ? "Sign In" : "Create Account"}
             </Button>
           </form>
 
           {/* Toggle Login/Signup */}
           <div className="text-center text-sm">
             <span className="text-muted-foreground">
-              {isLogin ? "Don't have an account? " : "Already have an account? "}
+              {isLogin
+                ? "Don't have an account? "
+                : "Already have an account? "}
             </span>
             <button
               onClick={() => setIsLogin(!isLogin)}
@@ -322,7 +338,7 @@ export default function Login() {
       </div>
 
       {/* Username Dialog for Google Sign-in */}
-      <UsernameDialog 
+      <UsernameDialog
         open={showUsernameDialog}
         onSubmit={handleUsernameSubmit}
         loading={loading}

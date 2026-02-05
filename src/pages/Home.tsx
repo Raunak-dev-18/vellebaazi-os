@@ -17,19 +17,43 @@ interface SuggestedUser {
   isFollowing?: boolean;
 }
 
+interface UserRecord {
+  username?: string;
+  email?: string;
+  photoURL?: string;
+  accountPrivacy?: string;
+}
+
+interface PostItem {
+  id: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  mediaUrl: string;
+  mediaType?: string;
+  postType?: string;
+  caption: string;
+  likes?: number;
+  comments?: number;
+  createdAt?: number;
+}
+
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Something went wrong";
   const [suggestedUsers, setSuggestedUsers] = useState<SuggestedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [followingUsers, setFollowingUsers] = useState<Set<string>>(new Set());
-  const [posts, setPosts] = useState<any[]>([]);
-  const [allPostsData, setAllPostsData] = useState<any[]>([]);
+  const [posts, setPosts] = useState<PostItem[]>([]);
+  const [allPostsData, setAllPostsData] = useState<PostItem[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
   const [displayedCount, setDisplayedCount] = useState(5);
   const [hasMorePosts, setHasMorePosts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [followLoading, setFollowLoading] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -54,11 +78,11 @@ export default function Home() {
         const snapshot = await get(usersRef);
 
         if (snapshot.exists()) {
-          const usersData = snapshot.val();
+          const usersData = snapshot.val() as Record<string, UserRecord>;
 
           const usersArray: SuggestedUser[] = Object.entries(usersData)
             .filter(([uid]) => uid !== user.uid && !followingSet.has(uid)) // Exclude current user and already following
-            .map(([uid, data]: [string, any]) => ({
+            .map(([uid, data]) => ({
               uid,
               username: data.username || data.email?.split("@")[0] || "user",
               email: data.email,
@@ -101,33 +125,40 @@ export default function Home() {
         // Get all users to check privacy settings
         const usersRef = ref(db, "users");
         const usersSnapshot = await get(usersRef);
-        const usersData = usersSnapshot.exists() ? usersSnapshot.val() : {};
+        const usersData = (
+          usersSnapshot.exists()
+            ? (usersSnapshot.val() as Record<string, UserRecord>)
+            : {}
+        ) as Record<string, UserRecord>;
 
         // Fetch all posts from Realtime Database
         const postsRef = ref(db, "posts");
         const postsSnapshot = await get(postsRef);
 
-        let allPostsArray: any[] = [];
+        let allPostsArray: PostItem[] = [];
 
         if (postsSnapshot.exists()) {
-          const allPosts = postsSnapshot.val();
+          const allPosts = postsSnapshot.val() as Record<
+            string,
+            Omit<PostItem, "id">
+          >;
           allPostsArray = Object.entries(allPosts)
-            .map(([id, post]: [string, any]) => ({
+            .map(([id, post]) => ({
               id,
               ...post,
             }))
-            .sort((a: any, b: any) => b.createdAt - a.createdAt)
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
             .slice(0, 50); // Limit to 50 posts
         }
 
-        const isVideoPost = (post: any) => {
+        const isVideoPost = (post: PostItem) => {
           if (post.mediaType === "video" || post.postType === "reel")
             return true;
           const mediaUrl = (post.mediaUrl || "").toLowerCase();
           return /\.(mp4|mov|webm)$/.test(mediaUrl);
         };
 
-        const isMediaUrlValid = (post: any) => {
+        const isMediaUrlValid = (post: PostItem) => {
           const mediaUrl = (post.mediaUrl || "").toString().trim();
           if (!mediaUrl) return false;
           if (mediaUrl.includes("supabase.co/storage")) return false;
@@ -135,7 +166,7 @@ export default function Home() {
         };
 
         // Filter posts based on privacy and remove videos from feed
-        const postsData = allPostsArray.filter((post: any) => {
+        const postsData = allPostsArray.filter((post) => {
           const postUserId = post.userId;
           const userData = usersData[postUserId];
           const isPrivate = userData?.accountPrivacy === "private";
@@ -149,7 +180,7 @@ export default function Home() {
         setAllPostsData(postsData);
         setHasMorePosts(postsData.length > displayedCount);
         setPosts(postsData.slice(0, displayedCount));
-      } catch (error) {
+      } catch (error: unknown) {
         console.error("Error fetching posts:", error);
         toast({
           title: "Error Loading Posts",
@@ -163,7 +194,7 @@ export default function Home() {
     };
 
     fetchPosts();
-  }, [user]);
+  }, [user, displayedCount, toast]);
 
   // Update displayed posts when count changes
   useEffect(() => {
@@ -201,6 +232,7 @@ export default function Home() {
 
   const handleFollow = async (targetUser: SuggestedUser) => {
     if (!user) return;
+    if (followLoading.has(targetUser.uid)) return;
 
     // Prevent self-follow
     if (user.uid === targetUser.uid) {
@@ -213,6 +245,7 @@ export default function Home() {
     }
 
     try {
+      setFollowLoading((prev) => new Set(prev).add(targetUser.uid));
       const db = getDatabase();
       const currentUsername =
         user.displayName || user.email?.split("@")[0] || "user";
@@ -237,10 +270,21 @@ export default function Home() {
         targetUserSnapshot.val().accountPrivacy === "private";
 
       if (isPrivateAccount) {
-        // Send follow request for private account
-        const followRequestRef = push(
-          ref(db, `followRequests/${targetUser.uid}`),
+        // Prevent duplicate follow requests from the same account
+        const followRequestRef = ref(
+          db,
+          `followRequests/${targetUser.uid}/${user.uid}`,
         );
+        const followRequestSnapshot = await get(followRequestRef);
+        if (followRequestSnapshot.exists()) {
+          toast({
+            title: "Request Pending",
+            description: "Your follow request is already pending.",
+          });
+          return;
+        }
+
+        // Send follow request for private account (idempotent key)
         await set(followRequestRef, {
           fromUserId: user.uid,
           fromUsername: currentUsername,
@@ -315,11 +359,17 @@ export default function Home() {
           description: `You are now following ${targetUser.username}`,
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to follow user",
+        description: getErrorMessage(error) || "Failed to follow user",
         variant: "destructive",
+      });
+    } finally {
+      setFollowLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(targetUser.uid);
+        return next;
       });
     }
   };
@@ -328,11 +378,17 @@ export default function Home() {
     navigate(`/users/profile/${username}`);
   };
 
-  const getTimeAgo = (timestamp: any) => {
+  const getTimeAgo = (timestamp: unknown) => {
     if (!timestamp) return "Just now";
 
     // Handle Firestore Timestamp
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const date =
+      typeof timestamp === "object" &&
+      timestamp !== null &&
+      "toDate" in timestamp &&
+      typeof (timestamp as { toDate?: () => Date }).toDate === "function"
+        ? (timestamp as { toDate: () => Date }).toDate()
+        : new Date(timestamp as string | number);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -504,8 +560,11 @@ export default function Home() {
                       variant="ghost"
                       className="text-xs font-semibold text-blue-500 hover:text-blue-600 h-auto p-0"
                       onClick={() => handleFollow(suggestedUser)}
+                      disabled={followLoading.has(suggestedUser.uid)}
                     >
-                      Follow
+                      {followLoading.has(suggestedUser.uid)
+                        ? "Following..."
+                        : "Follow"}
                     </Button>
                   </div>
                 ))

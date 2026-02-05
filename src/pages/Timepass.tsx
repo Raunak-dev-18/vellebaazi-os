@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getDatabase,
@@ -21,6 +21,7 @@ import {
   push,
   set,
   remove,
+  runTransaction,
 } from "firebase/database";
 import { useNavigate } from "react-router-dom";
 import { MentionText } from "@/components/MentionText";
@@ -45,6 +46,44 @@ interface Post {
   createdAt: number;
 }
 
+interface LikeEntry {
+  userId: string;
+  username: string;
+  createdAt: number;
+}
+
+interface ReplyData {
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  text: string;
+  createdAt: number;
+  replyTo?: string;
+  likes?: Record<string, LikeEntry>;
+}
+
+interface CommentData {
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  text: string;
+  createdAt: number;
+  likes?: Record<string, LikeEntry>;
+  replies?: Record<string, ReplyData>;
+}
+
+interface ReplyView extends ReplyData {
+  id: string;
+  likesCount: number;
+}
+
+interface CommentView extends CommentData {
+  id: string;
+  likesCount: number;
+  repliesCount: number;
+  repliesList: ReplyView[];
+}
+
 export default function Timepass() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -55,14 +94,15 @@ export default function Timepass() {
   const [hasMorePosts, setHasMorePosts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [likePending, setLikePending] = useState<Set<string>>(new Set());
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
   const [isCommentModalOpen, setIsCommentModalOpen] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
-  const [comments, setComments] = useState<any[]>([]);
+  const [comments, setComments] = useState<CommentView[]>([]);
   const [commentsDisplayed, setCommentsDisplayed] = useState(10);
   const [hasMoreComments, setHasMoreComments] = useState(false);
-  const [allCommentsData, setAllCommentsData] = useState<any[]>([]);
+  const [allCommentsData, setAllCommentsData] = useState<CommentView[]>([]);
   const [newComment, setNewComment] = useState("");
   const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
   const [replyingTo, setReplyingTo] = useState<{
@@ -74,26 +114,14 @@ export default function Timepass() {
   );
   const commentInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetchPosts();
-    checkLikedPosts();
-  }, [user]);
-
-  // Update displayed posts when count changes
-  useEffect(() => {
-    if (allPostsData.length === 0) return;
-    setHasMorePosts(allPostsData.length > displayedCount);
-    setPosts(allPostsData.slice(0, displayedCount));
-  }, [displayedCount, allPostsData]);
-
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     try {
       const db = getDatabase();
       const postsRef = ref(db, "posts");
       const snapshot = await get(postsRef);
 
       if (snapshot.exists()) {
-        const allPosts = snapshot.val();
+        const allPosts = snapshot.val() as Record<string, Omit<Post, "id">>;
         const isMediaUrlValid = (post: Post) => {
           const mediaUrl = (post.mediaUrl || "").toString().trim();
           if (!mediaUrl) return false;
@@ -102,11 +130,11 @@ export default function Timepass() {
         };
 
         const postsArray = Object.entries(allPosts)
-          .map(([id, post]: [string, any]) => ({
+          .map(([id, post]) => ({
             id,
             ...post,
           }))
-          .filter((post: Post) => {
+          .filter((post) => {
             if (!isMediaUrlValid(post)) return false;
             if (post.mediaType === "video" || post.postType === "reel")
               return true;
@@ -124,18 +152,9 @@ export default function Timepass() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [displayedCount]);
 
-  const loadMorePosts = () => {
-    if (isLoadingMore || !hasMorePosts) return;
-    setIsLoadingMore(true);
-    setTimeout(() => {
-      setDisplayedCount((prev) => prev + 5);
-      setIsLoadingMore(false);
-    }, 200);
-  };
-
-  const checkLikedPosts = async () => {
+  const checkLikedPosts = useCallback(async () => {
     if (!user) return;
 
     try {
@@ -154,46 +173,95 @@ export default function Timepass() {
     } catch (error) {
       console.error("Error checking likes:", error);
     }
+  }, [posts, user]);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
+
+  useEffect(() => {
+    checkLikedPosts();
+  }, [checkLikedPosts]);
+
+  // Update displayed posts when count changes
+  useEffect(() => {
+    if (allPostsData.length === 0) return;
+    setHasMorePosts(allPostsData.length > displayedCount);
+    setPosts(allPostsData.slice(0, displayedCount));
+  }, [displayedCount, allPostsData]);
+
+  const loadMorePosts = () => {
+    if (isLoadingMore || !hasMorePosts) return;
+    setIsLoadingMore(true);
+    setTimeout(() => {
+      setDisplayedCount((prev) => prev + 5);
+      setIsLoadingMore(false);
+    }, 200);
   };
 
   const handleLike = async (postId: string) => {
     if (!user) return;
+    if (likePending.has(postId)) return;
 
     try {
+      setLikePending((prev) => new Set(prev).add(postId));
       const db = getDatabase();
       const likeRef = ref(db, `likes/${postId}/${user.uid}`);
       const postRef = ref(db, `posts/${postId}`);
-      const isLiked = likedPosts.has(postId);
+      const likeSnapshot = await get(likeRef);
+      const isLiked = likeSnapshot.exists();
 
       if (isLiked) {
         // Unlike
-        await update(likeRef, null);
-        const post = posts.find((p) => p.id === postId);
-        if (post) {
-          await update(postRef, { likes: Math.max(0, post.likes - 1) });
-        }
+        await remove(likeRef);
+        const result = await runTransaction(postRef, (postData) => {
+          const data = (postData || {}) as { likes?: number };
+          const nextLikes = Math.max(0, (data.likes || 0) - 1);
+          return { ...data, likes: nextLikes };
+        });
+        const nextLikes =
+          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          Math.max(0, (posts.find((p) => p.id === postId)?.likes || 0) - 1);
         setLikedPosts((prev) => {
           const newSet = new Set(prev);
           newSet.delete(postId);
           return newSet;
         });
+        setPosts((prev) =>
+          prev.map((post) =>
+            post.id === postId ? { ...post, likes: nextLikes } : post,
+          ),
+        );
       } else {
         // Like
-        await update(likeRef, {
+        await set(likeRef, {
           userId: user.uid,
           username: user.displayName || "user",
           createdAt: Date.now(),
         });
-        const post = posts.find((p) => p.id === postId);
-        if (post) {
-          await update(postRef, { likes: post.likes + 1 });
-        }
+        const result = await runTransaction(postRef, (postData) => {
+          const data = (postData || {}) as { likes?: number };
+          const nextLikes = (data.likes || 0) + 1;
+          return { ...data, likes: nextLikes };
+        });
+        const nextLikes =
+          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          (posts.find((p) => p.id === postId)?.likes || 0) + 1;
         setLikedPosts((prev) => new Set(prev).add(postId));
+        setPosts((prev) =>
+          prev.map((post) =>
+            post.id === postId ? { ...post, likes: nextLikes } : post,
+          ),
+        );
       }
-
-      fetchPosts();
     } catch (error) {
       console.error("Error toggling like:", error);
+    } finally {
+      setLikePending((prev) => {
+        const next = new Set(prev);
+        next.delete(postId);
+        return next;
+      });
     }
   };
 
@@ -280,9 +348,9 @@ export default function Timepass() {
       const snapshot = await get(commentsRef);
 
       if (snapshot.exists()) {
-        const commentsData = snapshot.val();
+        const commentsData = snapshot.val() as Record<string, CommentData>;
         const commentsArray = Object.entries(commentsData)
-          .map(([id, comment]: [string, any]) => ({
+          .map(([id, comment]) => ({
             id,
             ...comment,
             likesCount: comment.likes ? Object.keys(comment.likes).length : 0,
@@ -291,17 +359,17 @@ export default function Timepass() {
               : 0,
             repliesList: comment.replies
               ? Object.entries(comment.replies)
-                  .map(([replyId, reply]: [string, any]) => ({
+                  .map(([replyId, reply]) => ({
                     id: replyId,
                     ...reply,
                     likesCount: reply.likes
                       ? Object.keys(reply.likes).length
                       : 0,
                   }))
-                  .sort((a: any, b: any) => a.createdAt - b.createdAt)
+                  .sort((a, b) => a.createdAt - b.createdAt)
               : [],
           }))
-          .sort((a: any, b: any) => b.createdAt - a.createdAt);
+          .sort((a, b) => b.createdAt - a.createdAt);
 
         setAllCommentsData(commentsArray);
         setHasMoreComments(commentsArray.length > commentsDisplayed);
@@ -807,7 +875,7 @@ export default function Timepass() {
                                       <span className="w-6 h-[1px] bg-muted-foreground/50" />
                                       Hide replies
                                     </button>
-                                    {comment.repliesList.map((reply: any) => (
+                                    {comment.repliesList.map((reply) => (
                                       <div
                                         key={reply.id}
                                         className="flex gap-2"

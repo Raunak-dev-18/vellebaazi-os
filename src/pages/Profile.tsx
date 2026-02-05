@@ -164,7 +164,7 @@ export default function Profile() {
     };
 
     fetchUserData();
-  }, [user]);
+  }, [user, displayedCount]);
 
   // Update displayed posts when count changes
   useEffect(() => {
@@ -384,12 +384,12 @@ export default function Profile() {
       // Refresh posts
       const postsSnapshot = await get(postsRef);
       if (postsSnapshot.exists()) {
-        const allPosts = postsSnapshot.val();
+        const allPosts = postsSnapshot.val() as Record<string, unknown>;
         const userPosts = Object.entries(allPosts)
-          .filter(([_, post]: [string, any]) => post.userId === user.uid)
-          .map(([id, post]: [string, any]) => ({
+          .filter(([, post]) => isPostRecord(post) && post.userId === user.uid)
+          .map(([id, post]) => ({
             id,
-            ...post,
+            ...(post as Omit<PostRecord, "id">),
           }))
           .sort((a, b) => b.createdAt - a.createdAt);
 

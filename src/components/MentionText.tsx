@@ -40,7 +40,7 @@ export function MentionText({ text, className = "" }: MentionTextProps) {
           onClick={(e) => handleMentionClick(username, e)}
         >
           @{username}
-        </span>
+        </span>,
       );
 
       lastIndex = match.index + match[0].length;
@@ -55,19 +55,4 @@ export function MentionText({ text, className = "" }: MentionTextProps) {
   };
 
   return <span className={className}>{renderTextWithMentions()}</span>;
-}
-
-// Utility function to extract mentions from text
-export function extractMentions(text: string): string[] {
-  const mentions: string[] = [];
-  let match;
-  
-  MENTION_REGEX.lastIndex = 0;
-  while ((match = MENTION_REGEX.exec(text)) !== null) {
-    if (!mentions.includes(match[1])) {
-      mentions.push(match[1]);
-    }
-  }
-  
-  return mentions;
 }

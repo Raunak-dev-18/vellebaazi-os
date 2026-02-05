@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -39,66 +39,72 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
 
   const apiReady = useMemo(() => Boolean(apiKey), [apiKey]);
 
-  const fetchTrendingGifs = async (loadMore = false) => {
-    if (!apiKey) return;
+  const fetchTrendingGifs = useCallback(
+    async (loadMore = false) => {
+      if (!apiKey) return;
 
-    if (!loadMore) {
-      setIsLoadingGifs(true);
-    }
-
-    try {
-      const currentOffset = loadMore ? gifOffset : 0;
-      const response = await fetch(
-        `https://api.giphy.com/v1/gifs/trending?api_key=${apiKey}&limit=20&offset=${currentOffset}&rating=g`,
-      );
-      const data = await response.json();
-      const newGifs = data.data || [];
-
-      if (loadMore && newGifs.length > 0) {
-        setGifs((prev) => [...prev, ...newGifs]);
-      } else if (!loadMore) {
-        setGifs(newGifs);
+      if (!loadMore) {
+        setIsLoadingGifs(true);
       }
-      setGifOffset(currentOffset + 20);
-      setHasMoreGifs(newGifs.length === 20);
-    } catch (error) {
-      console.error("Error fetching trending GIFs:", error);
-    } finally {
-      setIsLoadingGifs(false);
-    }
-  };
 
-  const searchGifs = async (query: string, loadMore = false) => {
-    if (!apiKey || !query.trim()) {
-      fetchTrendingGifs(false);
-      return;
-    }
+      try {
+        const currentOffset = loadMore ? gifOffset : 0;
+        const response = await fetch(
+          `https://api.giphy.com/v1/gifs/trending?api_key=${apiKey}&limit=20&offset=${currentOffset}&rating=g`,
+        );
+        const data = await response.json();
+        const newGifs = data.data || [];
 
-    if (!loadMore) {
-      setIsLoadingGifs(true);
-    }
-
-    try {
-      const currentOffset = loadMore ? gifOffset : 0;
-      const response = await fetch(
-        `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
-      );
-      const data = await response.json();
-      const newGifs = data.data || [];
-
-      if (loadMore && newGifs.length > 0) {
-        setGifs((prev) => [...prev, ...newGifs]);
-      } else if (!loadMore) {
-        setGifs(newGifs);
+        if (loadMore && newGifs.length > 0) {
+          setGifs((prev) => [...prev, ...newGifs]);
+        } else if (!loadMore) {
+          setGifs(newGifs);
+        }
+        setGifOffset(currentOffset + 20);
+        setHasMoreGifs(newGifs.length === 20);
+      } catch (error) {
+        console.error("Error fetching trending GIFs:", error);
+      } finally {
+        setIsLoadingGifs(false);
       }
-      setGifOffset(currentOffset + 20);
-      setHasMoreGifs(newGifs.length === 20);
-    } catch (error) {
-      console.error("Error searching GIFs:", error);
-    } finally {
-      setIsLoadingGifs(false);
-    }
-  };
+    },
+    [apiKey, gifOffset],
+  );
+
+  const searchGifs = useCallback(
+    async (query: string, loadMore = false) => {
+      if (!apiKey || !query.trim()) {
+        fetchTrendingGifs(false);
+        return;
+      }
+
+      if (!loadMore) {
+        setIsLoadingGifs(true);
+      }
+
+      try {
+        const currentOffset = loadMore ? gifOffset : 0;
+        const response = await fetch(
+          `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
+        );
+        const data = await response.json();
+        const newGifs = data.data || [];
+
+        if (loadMore && newGifs.length > 0) {
+          setGifs((prev) => [...prev, ...newGifs]);
+        } else if (!loadMore) {
+          setGifs(newGifs);
+        }
+        setGifOffset(currentOffset + 20);
+        setHasMoreGifs(newGifs.length === 20);
+      } catch (error) {
+        console.error("Error searching GIFs:", error);
+      } finally {
+        setIsLoadingGifs(false);
+      }
+    },
+    [apiKey, fetchTrendingGifs, gifOffset],
+  );
 
   const loadMoreGifs = async () => {
     if (isLoadingGifs || isLoadingMoreGifs || !hasMoreGifs) return;
@@ -118,7 +124,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
   useEffect(() => {
     if (!apiReady) return;
     fetchTrendingGifs(false);
-  }, [apiReady]);
+  }, [apiReady, fetchTrendingGifs]);
 
   useEffect(() => {
     if (!apiReady) return;
@@ -131,7 +137,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [apiReady, gifSearchQuery]);
+  }, [apiReady, gifSearchQuery, fetchTrendingGifs, searchGifs]);
 
   return (
     <div className="absolute bottom-full left-4 mb-2 w-[320px] bg-background border border-border rounded-lg shadow-lg z-30 max-h-[300px] flex flex-col">

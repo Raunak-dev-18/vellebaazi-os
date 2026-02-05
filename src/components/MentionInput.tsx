@@ -11,6 +11,16 @@ interface User {
   interactionScore?: number;
 }
 
+interface UserRecord {
+  username?: string;
+  photoURL?: string;
+}
+
+interface ChatMeta {
+  otherUserId?: string;
+  otherUsername?: string;
+}
+
 interface MentionInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -49,9 +59,11 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
           // Get all users data first
           const usersRef = dbRef(db, "users");
           const usersSnapshot = await get(usersRef);
-          const allUsersData = usersSnapshot.exists()
-            ? usersSnapshot.val()
-            : {};
+          const allUsersData = (
+            usersSnapshot.exists()
+              ? (usersSnapshot.val() as Record<string, UserRecord>)
+              : {}
+          ) as Record<string, UserRecord>;
 
           // Fetch followers (people who follow current user)
           const followersRef = dbRef(db, `followers/${user.uid}`);
@@ -99,8 +111,8 @@ export const MentionInput = forwardRef<HTMLInputElement, MentionInputProps>(
           const chatsRef = dbRef(db, `userChats/${user.uid}`);
           const chatsSnapshot = await get(chatsRef);
           if (chatsSnapshot.exists()) {
-            const chats = chatsSnapshot.val();
-            Object.values(chats).forEach((chat: any) => {
+            const chats = chatsSnapshot.val() as Record<string, ChatMeta>;
+            Object.values(chats).forEach((chat) => {
               const uid = chat.otherUserId;
               if (uid && uid !== user.uid && allUsersData[uid]) {
                 const userData = allUsersData[uid];

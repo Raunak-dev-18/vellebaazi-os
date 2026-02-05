@@ -1,0 +1,129 @@
+# Contect
+
+## Purpose
+This file is the canonical, deep project context and the running change log. Every repo change must be recorded here in the **Change Log** section with date, summary, and files touched.
+
+## Project Summary
+- Velle Baazi is a social media web app inspired by Instagram with posts, reels (Timepass), stories, messaging (Bakaiti), notifications, profiles, and settings.
+- Frontend is a Vite + React 18 + TypeScript SPA with React Router and Tailwind/shadcn UI.
+- Core backend services are Firebase Auth + Realtime Database, with media stored in an external Storage API (Skyflare storage endpoint).
+- Optional AI assistant (@cognix) is powered by Google Gemini streaming responses inside chat.
+
+## Tech Stack
+- Runtime: React 18, TypeScript, Vite
+- Styling/UI: Tailwind CSS, shadcn/ui, Radix UI, lucide-react icons
+- State/data: React Query, React Context
+- Auth: Firebase Auth (Email/Password + Google OAuth)
+- Data: Firebase Realtime Database
+- Media: Storage API (Skyflare) via REST
+- AI: Google Gemini API
+- Routing: React Router v6
+
+## App Architecture
+- Single-page app bootstrapped in `src/main.tsx` and routed in `src/App.tsx`.
+- Providers: ThemeProvider, React Query, Tooltip, Toaster, Router, AuthProvider.
+- Protected routes: All main routes are gated by `ProtectedRoute` (redirects to `/login`).
+- Lazy loading: Pages are lazy-loaded with React `Suspense` and a splash screen.
+- Global UX: right-click is disabled on images/videos via a global listener.
+
+## Routing Map
+- `/login` public auth page
+- `/terms`, `/privacy` public legal pages
+- `/` Home feed
+- `/timepass` Reels feed
+- `/bakaiti` Messaging
+- `/create` Create post/reel flow
+- `/profile` Own profile
+- `/settings` Account + privacy settings
+- `/explore` Explore page
+- `/notifications` Activity notifications
+- `/users/profile/:username` Public user profile
+
+## Data Model (Realtime Database)
+Table of key paths and usage based on current code:
+
+| Path | Purpose | Notes |
+| --- | --- | --- |
+| `users/{uid}` | User profile data | `username`, `email`, `photoURL`, `gender`, `accountPrivacy`, `createdAt` |
+| `posts/{postId}` | Posts and reels | `mediaUrl`, `mediaType`, `postType`, `caption`, `likes`, `comments`, `views`, `createdAt` |
+| `stories/{storyId}` | Stories | `userId`, `mediaUrl`, `mediaType`, `createdAt`, `expiresAt` (24h) |
+| `likes/{postId}/{uid}` | Post likes | Also used for reels |
+| `comments/{postId}/{commentId}` | Post comments | Includes nested `replies` and per-comment `likes` |
+| `followers/{uid}/{followerUid}` | Followers | Simple list with username + timestamp |
+| `following/{uid}/{followingUid}` | Following | Simple list with username + timestamp |
+| `followRequests/{uid}/{requestId}` | Private account follow requests | `fromUserId`, `status` |
+| `notifications/{uid}/{notificationId}` | Notifications | Types include `follow`, `follow_request`, `follow_request_accepted`, `follow_request_blocked` |
+| `userChats/{uid}/{chatId}` | Chat list metadata | `lastMessage`, `lastMessageTime`, `otherUserId`, avatar |
+| `messages/{chatId}/{messageId}` | Chat messages | Supports text, attachments, reactions, forwards |
+| `typing/{chatId}/{uid}` | Typing indicator | Boolean-ish updates |
+| `deletedMessages/{uid}/{chatId}/{messageId}` | Per-user message deletes | Used for local deletion |
+
+## Core Feature Flows
+**Authentication**
+- On auth state change, user is synced to `users/{uid}` if missing.
+- Email/password sign up sets displayName and creates `users/{uid}` record.
+- Google sign-in creates `users/{uid}` if new.
+
+**Home Feed**
+- Reads `posts` and filters by privacy using `users/{uid}.accountPrivacy`.
+- Shows only image posts (filters out video/reel media).
+- Infinite scrolling by batches of 5.
+
+**Reels (Timepass)**
+- Reads `posts`, filters to `mediaType=video` or `postType=reel`.
+- Snap scroll full-screen feed with auto-play videos.
+- Supports likes and comments in a side modal.
+
+**Stories**
+- Stories are stored in `stories`, expiring after 24 hours.
+- Local cleanup runs every minute to delete expired stories.
+- Images can be edited via `StoryEditor` before upload.
+
+**Posts & Comments**
+- Posts created in `Create` upload media to Storage API, then write to `posts`.
+- Comments live under `comments/{postId}` with nested replies.
+- Likes stored under `likes/{postId}/{uid}` and mirrored in `posts/{postId}.likes`.
+
+**Messaging (Bakaiti)**
+- Chats keyed by a stable `chatId` from sorted user IDs.
+- `userChats` stores chat list metadata per user.
+- `messages` stores text, files, reactions, forwarded messages, and deletion metadata.
+- Typing indicator uses `typing/{chatId}/{uid}`.
+- Supports @cognix AI replies by streaming Gemini responses and updating messages.
+
+**Notifications**
+- Follow, follow request, and acceptance are written to `notifications/{uid}`.
+- Private account requests use `followRequests/{uid}`.
+
+## External Services & APIs
+- Firebase (Auth + Realtime DB + Storage + Firestore init in `src/lib/firebase.ts`).
+- Storage API (Skyflare) in `src/lib/storage.ts` using `VITE_STORAGE_*` env vars.
+- Gemini API in `src/lib/ai.ts` for chat AI responses.
+- Giphy API key is expected in `.env` for chat GIFs (usage in chat components).
+- A4F API key and base URL are listed in `.env.example` for image editing/generation.
+
+## Configuration & Build
+- `vite.config.ts` sets `server.port=8080` and uses module alias `@ -> src`.
+- Manual chunking for vendor, firebase, radix, router, etc.
+- Scripts in `package.json`:
+  - `npm run dev` starts Vite dev server
+  - `npm run build` builds for production
+  - `npm run lint` runs eslint
+  - `npm run preview` serves the build
+
+## Security & Secrets Notes
+- `storage-docs.txt` contains a bearer token. This should be treated as sensitive and ideally moved out of version control.
+- `.env` exists in repo root; avoid committing real secrets.
+- `src/lib/firebase.ts` currently hardcodes Firebase config rather than reading `.env`.
+
+## Notable UI/UX Details
+- Right-click disabled on images/videos globally.
+- Story ring uses gradient and hover scaling.
+- Timepass has snap scroll and double-tap heart animation.
+
+## Change Log
+- 2026-02-05: Created `contect.md` and added `AGENTS.md` instruction to keep this log updated.
+- 2026-02-05: Added like/follow de-duplication guards and deterministic follow request keys; made post media in `PostCard` responsive to any aspect ratio. Files touched: `src/components/PostCard.tsx`, `src/pages/Home.tsx`, `src/pages/Notifications.tsx`, `src/pages/Timepass.tsx`, `src/pages/UserProfile.tsx`.
+- 2026-02-05: Disabled follow button on own profile to prevent self-follow UI confusion. Files touched: `src/pages/UserProfile.tsx`.
+- 2026-02-05: Fixed lint errors and warnings by adding explicit types for Firebase data, cleaning hook deps, extracting mention utilities, and adjusting ESLint directives; updated Tailwind config import style. Files touched: `src/components/MentionInput.tsx`, `src/components/MentionTextarea.tsx`, `src/components/MentionText.tsx`, `src/components/NotificationsDialog.tsx`, `src/components/PostCard.tsx`, `src/components/Stories.tsx`, `src/components/chat/GifPicker.tsx`, `src/components/theme-provider.tsx`, `src/components/ui/badge.tsx`, `src/components/ui/button.tsx`, `src/components/ui/command.tsx`, `src/components/ui/form.tsx`, `src/components/ui/navigation-menu.tsx`, `src/components/ui/sidebar.tsx`, `src/components/ui/sonner.tsx`, `src/components/ui/textarea.tsx`, `src/components/ui/toggle.tsx`, `src/contexts/AuthContext.tsx`, `src/pages/Create.tsx`, `src/pages/Explore.tsx`, `src/pages/Home.tsx`, `src/pages/Login.tsx`, `src/pages/Notifications.tsx`, `src/pages/Profile.tsx`, `src/pages/Settings.tsx`, `src/pages/Timepass.tsx`, `src/pages/UserProfile.tsx`, `src/utils/cleanupFollowData.ts`, `src/utils/mentions.ts`, `tailwind.config.ts`.
+- 2026-02-05: Fixed Create mentions import path resolution and restored `cleanedCount` mutability; lint clean. Files touched: `src/pages/Create.tsx`, `src/utils/cleanupFollowData.ts`.

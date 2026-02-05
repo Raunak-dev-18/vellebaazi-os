@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getDatabase,
@@ -19,6 +19,7 @@ import {
   push,
   remove,
   update,
+  runTransaction,
 } from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -37,6 +38,51 @@ interface PostCardProps {
   userId: string;
 }
 
+interface LikeEntry {
+  userId: string;
+  username: string;
+  createdAt: number;
+}
+
+interface ReplyData {
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  text: string;
+  createdAt: number;
+  replyTo?: string;
+  likes?: Record<string, LikeEntry>;
+}
+
+interface CommentData {
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  text: string;
+  createdAt: number;
+  likes?: Record<string, LikeEntry>;
+  replies?: Record<string, ReplyData>;
+}
+
+interface ReplyView extends ReplyData {
+  id: string;
+  likesCount: number;
+}
+
+interface CommentView extends CommentData {
+  id: string;
+  likesCount: number;
+  repliesCount: number;
+  repliesList: ReplyView[];
+}
+
+interface LikedUser {
+  uid: string;
+  username: string;
+  avatar: string;
+  createdAt: number;
+}
+
 export function PostCard({
   id,
   username,
@@ -53,17 +99,18 @@ export function PostCard({
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(initialLikes || 0);
   const [comment, setComment] = useState("");
-  const [comments, setComments] = useState<any[]>([]);
+  const [comments, setComments] = useState<CommentView[]>([]);
   const [showComments, setShowComments] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [showLikesModal, setShowLikesModal] = useState(false);
-  const [likedUsers, setLikedUsers] = useState<any[]>([]);
-  const [allLikedUsers, setAllLikedUsers] = useState<any[]>([]);
+  const [likedUsers, setLikedUsers] = useState<LikedUser[]>([]);
+  const [allLikedUsers, setAllLikedUsers] = useState<LikedUser[]>([]);
   const [loadingLikes, setLoadingLikes] = useState(false);
+  const [isLikePending, setIsLikePending] = useState(false);
   const [likesDisplayed, setLikesDisplayed] = useState(10);
   const [hasMoreLikes, setHasMoreLikes] = useState(false);
-  const [allCommentsData, setAllCommentsData] = useState<any[]>([]);
+  const [allCommentsData, setAllCommentsData] = useState<CommentView[]>([]);
   const [commentsDisplayed, setCommentsDisplayed] = useState(5);
   const [hasMoreComments, setHasMoreComments] = useState(false);
   const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
@@ -85,13 +132,7 @@ export function PostCard({
 
   const isBlockedMediaUrl = !image || image.includes("supabase.co/storage");
 
-  useEffect(() => {
-    checkIfLiked();
-    fetchComments();
-    fetchLikedComments();
-  }, [id, user]);
-
-  const fetchLikedComments = async () => {
+  const fetchLikedComments = useCallback(async () => {
     if (!user) return;
     try {
       const db = getDatabase();
@@ -100,21 +141,15 @@ export function PostCard({
 
       if (snapshot.exists()) {
         const liked = new Set<string>();
-        const commentsData = snapshot.val();
+        const commentsData = snapshot.val() as Record<string, CommentData>;
 
-        for (const [commentId, comment] of Object.entries(commentsData) as [
-          string,
-          any,
-        ][]) {
+        for (const [commentId, comment] of Object.entries(commentsData)) {
           if (comment.likes && comment.likes[user.uid]) {
             liked.add(commentId);
           }
           // Check replies too
           if (comment.replies) {
-            for (const [replyId, reply] of Object.entries(comment.replies) as [
-              string,
-              any,
-            ][]) {
+            for (const [replyId, reply] of Object.entries(comment.replies)) {
               if (reply.likes && reply.likes[user.uid]) {
                 liked.add(replyId);
               }
@@ -126,9 +161,9 @@ export function PostCard({
     } catch (error) {
       console.error("Error fetching liked comments:", error);
     }
-  };
+  }, [id, user]);
 
-  const checkIfLiked = async () => {
+  const checkIfLiked = useCallback(async () => {
     if (!user) return;
 
     try {
@@ -139,17 +174,19 @@ export function PostCard({
     } catch (error) {
       console.error("Error checking like:", error);
     }
-  };
+  }, [id, user]);
 
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     try {
       const db = getDatabase();
       const commentsRef = ref(db, `comments/${id}`);
       const snapshot = await get(commentsRef);
 
       if (snapshot.exists()) {
-        const commentsData = Object.entries(snapshot.val())
-          .map(([commentId, comment]: [string, any]) => ({
+        const commentsData = Object.entries(
+          snapshot.val() as Record<string, CommentData>,
+        )
+          .map(([commentId, comment]) => ({
             id: commentId,
             ...comment,
             likesCount: comment.likes ? Object.keys(comment.likes).length : 0,
@@ -158,17 +195,17 @@ export function PostCard({
               : 0,
             repliesList: comment.replies
               ? Object.entries(comment.replies)
-                  .map(([replyId, reply]: [string, any]) => ({
+                  .map(([replyId, reply]) => ({
                     id: replyId,
                     ...reply,
                     likesCount: reply.likes
                       ? Object.keys(reply.likes).length
                       : 0,
                   }))
-                  .sort((a: any, b: any) => a.createdAt - b.createdAt)
+                  .sort((a, b) => a.createdAt - b.createdAt)
               : [],
           }))
-          .sort((a: any, b: any) => b.createdAt - a.createdAt);
+          .sort((a, b) => b.createdAt - a.createdAt);
         setAllCommentsData(commentsData);
         setHasMoreComments(commentsData.length > commentsDisplayed);
         setComments(commentsData.slice(0, commentsDisplayed));
@@ -180,7 +217,13 @@ export function PostCard({
     } catch (error) {
       console.error("Error fetching comments:", error);
     }
-  };
+  }, [commentsDisplayed, id]);
+
+  useEffect(() => {
+    checkIfLiked();
+    fetchComments();
+    fetchLikedComments();
+  }, [checkIfLiked, fetchComments, fetchLikedComments]);
 
   const loadMoreComments = () => {
     if (!hasMoreComments) return;
@@ -279,25 +322,26 @@ export function PostCard({
       const snapshot = await get(likesRef);
 
       if (snapshot.exists()) {
-        const likesData = snapshot.val();
+        const likesData = snapshot.val() as Record<string, LikeEntry>;
         const usersArray = await Promise.all(
-          Object.entries(likesData).map(
-            async ([uid, likeData]: [string, any]) => {
-              // Fetch user details
-              const userRef = ref(db, `users/${uid}`);
-              const userSnapshot = await get(userRef);
-              const userData = userSnapshot.val();
+          Object.entries(likesData).map(async ([uid, likeData]) => {
+            // Fetch user details
+            const userRef = ref(db, `users/${uid}`);
+            const userSnapshot = await get(userRef);
+            const userData = userSnapshot.val() as {
+              username?: string;
+              photoURL?: string;
+            } | null;
 
-              return {
-                uid,
-                username: likeData.username || userData?.username || "user",
-                avatar:
-                  userData?.photoURL ||
-                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-                createdAt: likeData.createdAt,
-              };
-            },
-          ),
+            return {
+              uid,
+              username: likeData.username || userData?.username || "user",
+              avatar:
+                userData?.photoURL ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+              createdAt: likeData.createdAt,
+            };
+          }),
         );
 
         // Sort by most recent first
@@ -346,21 +390,31 @@ export function PostCard({
       });
       return;
     }
+    if (isLikePending) return;
 
     try {
+      setIsLikePending(true);
       const db = getDatabase();
       const postRef = ref(db, `posts/${id}`);
       const likeRef = ref(db, `likes/${id}/${user.uid}`);
 
-      if (isLiked) {
+      const likeSnapshot = await get(likeRef);
+      const alreadyLiked = likeSnapshot.exists();
+
+      if (alreadyLiked) {
         // Unlike
         await remove(likeRef);
-        await update(postRef, {
-          likes: likesCount - 1,
+        const result = await runTransaction(postRef, (postData) => {
+          const data = (postData || {}) as { likes?: number };
+          const nextLikes = Math.max(0, (data.likes || 0) - 1);
+          return { ...data, likes: nextLikes };
         });
 
         setIsLiked(false);
-        setLikesCount((prev) => Math.max(0, prev - 1));
+        const nextLikes =
+          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          Math.max(0, likesCount - 1);
+        setLikesCount(nextLikes);
       } else {
         // Like
         await set(likeRef, {
@@ -369,20 +423,27 @@ export function PostCard({
           createdAt: Date.now(),
         });
 
-        await update(postRef, {
-          likes: likesCount + 1,
+        const result = await runTransaction(postRef, (postData) => {
+          const data = (postData || {}) as { likes?: number };
+          const nextLikes = (data.likes || 0) + 1;
+          return { ...data, likes: nextLikes };
         });
 
         setIsLiked(true);
-        setLikesCount((prev) => prev + 1);
+        const nextLikes =
+          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          likesCount + 1;
+        setLikesCount(nextLikes);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error toggling like:", error);
       toast({
         title: "Error",
         description: "Failed to update like",
         variant: "destructive",
       });
+    } finally {
+      setIsLikePending(false);
     }
   };
 
@@ -447,7 +508,7 @@ export function PostCard({
 
       setComment("");
       fetchComments();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error posting comment:", error);
       toast({
         title: "Error",
@@ -479,11 +540,11 @@ export function PostCard({
       </div>
 
       {/* Image/Video */}
-      <div className="w-full aspect-square bg-muted relative">
+      <div className="w-full bg-muted relative flex items-center justify-center overflow-hidden max-h-[75vh]">
         {image && !mediaError && !isBlockedMediaUrl ? (
           isVideoUrl(image) ? (
             <div
-              className="relative w-full h-full"
+              className="relative w-full h-full flex items-center justify-center"
               onClick={() => {
                 if (videoRef.current) {
                   if (videoRef.current.paused) {
@@ -501,7 +562,7 @@ export function PostCard({
                 loop
                 muted={isMuted}
                 playsInline
-                className="w-full h-full object-cover cursor-pointer"
+                className="w-full h-auto max-h-[75vh] object-contain cursor-pointer"
                 onError={() => setMediaError(true)}
               />
               <button
@@ -520,13 +581,13 @@ export function PostCard({
             </div>
           ) : (
             <div
-              className="relative w-full h-full"
+              className="relative w-full h-full flex items-center justify-center"
               onDoubleClick={() => handleLike()}
             >
               <img
                 src={image}
                 alt="Post"
-                className="w-full h-full object-cover cursor-pointer"
+                className="w-full h-auto max-h-[75vh] object-contain cursor-pointer"
                 onError={() => setMediaError(true)}
               />
             </div>
@@ -666,7 +727,7 @@ export function PostCard({
                           <span className="w-6 h-[1px] bg-muted-foreground/50" />
                           Hide replies
                         </button>
-                        {commentItem.repliesList.map((reply: any) => (
+                        {commentItem.repliesList.map((reply) => (
                           <div key={reply.id} className="flex gap-2">
                             <Avatar className="h-6 w-6 flex-shrink-0">
                               <AvatarImage

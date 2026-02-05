@@ -3,16 +3,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Upload, Image as ImageIcon, Video, Music, AtSign, Check } from "lucide-react";
+import {
+  ArrowLeft,
+  Upload,
+  Image as ImageIcon,
+  Video,
+  Music,
+  AtSign,
+  Check,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { getDatabase, ref, push, set, get } from "firebase/database";
 import { uploadToStorage } from "@/lib/storage";
 import { MentionTextarea } from "@/components/MentionTextarea";
-import { extractMentions } from "@/components/MentionText";
+import { extractMentions } from "../utils/mentions";
 
-type PostType = 'image' | 'reel';
+type PostType = "image" | "reel";
 
 export default function Create() {
   const navigate = useNavigate();
@@ -22,7 +30,7 @@ export default function Create() {
 
   // Step management
   const [currentStep, setCurrentStep] = useState(1);
-  
+
   // Step 1: Upload
   const [postType, setPostType] = useState<PostType | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -36,7 +44,9 @@ export default function Create() {
   // Step 3: Tag people
   const [taggedUsers, setTaggedUsers] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<
+    { uid: string; username: string; avatar: string }[]
+  >([]);
 
   // Step 4: Posting
   const [isPosting, setIsPosting] = useState(false);
@@ -51,8 +61,8 @@ export default function Create() {
     if (!file) return;
 
     // Validate file type
-    if (postType === 'image') {
-      if (!file.type.startsWith('image/')) {
+    if (postType === "image") {
+      if (!file.type.startsWith("image/")) {
         toast({
           title: "Invalid File",
           description: "Please select an image file",
@@ -60,8 +70,8 @@ export default function Create() {
         });
         return;
       }
-    } else if (postType === 'reel') {
-      if (!file.type.startsWith('video/')) {
+    } else if (postType === "reel") {
+      if (!file.type.startsWith("video/")) {
         toast({
           title: "Invalid File",
           description: "Please select a video file",
@@ -71,14 +81,14 @@ export default function Create() {
       }
 
       // Validate video duration (30 seconds max)
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      
+      const video = document.createElement("video");
+      video.preload = "metadata";
+
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = () => {
           window.URL.revokeObjectURL(video.src);
           const duration = video.duration;
-          
+
           if (duration > 30) {
             toast({
               title: "Video Too Long",
@@ -90,7 +100,7 @@ export default function Create() {
             resolve(duration);
           }
         };
-        
+
         video.onerror = () => {
           toast({
             title: "Invalid Video",
@@ -99,7 +109,7 @@ export default function Create() {
           });
           reject(new Error("Invalid video"));
         };
-        
+
         video.src = URL.createObjectURL(file);
       }).catch(() => {
         return;
@@ -129,26 +139,34 @@ export default function Create() {
 
     try {
       const db = getDatabase();
-      const usersRef = ref(db, 'users');
+      const usersRef = ref(db, "users");
       const snapshot = await get(usersRef);
 
       if (snapshot.exists()) {
-        const usersData = snapshot.val();
+        const usersData = snapshot.val() as Record<
+          string,
+          { username?: string; photoURL?: string }
+        >;
         const results = Object.entries(usersData)
-          .filter(([uid, data]: [string, any]) => 
-            uid !== user?.uid && 
-            data.username?.toLowerCase().includes(searchTerm.toLowerCase())
+          .filter(
+            ([uid, data]) =>
+              uid !== user?.uid &&
+              (data.username || "")
+                .toLowerCase()
+                .includes(searchTerm.toLowerCase()),
           )
-          .map(([uid, data]: [string, any]) => ({
+          .map(([uid, data]) => ({
             uid,
-            username: data.username,
-            avatar: data.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`
+            username: data.username || "user",
+            avatar:
+              data.photoURL ||
+              `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
           }))
           .slice(0, 5);
 
         setSearchResults(results);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error searching users:", error);
     }
   };
@@ -162,7 +180,7 @@ export default function Create() {
   };
 
   const handleRemoveTag = (username: string) => {
-    setTaggedUsers(taggedUsers.filter(u => u !== username));
+    setTaggedUsers(taggedUsers.filter((u) => u !== username));
   };
 
   const handlePost = async () => {
@@ -176,36 +194,46 @@ export default function Create() {
       });
 
       const db = getDatabase();
-      
+
       // Upload media to Storage API with timeout
-      const fileExtension = selectedFile.name.split('.').pop();
+      const fileExtension = selectedFile.name.split(".").pop();
       const fileName = `${postType}s/${user.uid}/${Date.now()}.${fileExtension}`;
-      
+
       let mediaUrl;
       try {
         mediaUrl = await Promise.race([
           uploadToStorage(selectedFile, fileName),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Upload timeout')), 120000) // 2 minute timeout
-          )
+          new Promise(
+            (_, reject) =>
+              setTimeout(() => reject(new Error("Upload timeout")), 120000), // 2 minute timeout
+          ),
         ]);
-      } catch (uploadError: any) {
-        if (uploadError.message === 'Upload timeout') {
-          throw new Error('Upload is taking too long. Please try with a smaller file or check your internet connection.');
+      } catch (uploadError: unknown) {
+        if (
+          uploadError instanceof Error &&
+          uploadError.message === "Upload timeout"
+        ) {
+          throw new Error(
+            "Upload is taking too long. Please try with a smaller file or check your internet connection.",
+          );
         }
-        throw uploadError;
+        throw uploadError instanceof Error
+          ? uploadError
+          : new Error("Upload failed");
       }
 
       // Create post in Realtime Database
-      const postsRef = ref(db, 'posts');
+      const postsRef = ref(db, "posts");
       const newPostRef = push(postsRef);
 
       await set(newPostRef, {
         userId: user.uid,
-        username: user.displayName || user.email?.split('@')[0] || 'user',
-        userAvatar: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+        username: user.displayName || user.email?.split("@")[0] || "user",
+        userAvatar:
+          user.photoURL ||
+          `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
         mediaUrl: mediaUrl as string,
-        mediaType: postType === 'reel' ? 'video' : 'image',
+        mediaType: postType === "reel" ? "video" : "image",
         postType: postType, // 'image' or 'reel'
         caption: caption.trim(),
         commentsEnabled,
@@ -219,16 +247,16 @@ export default function Create() {
 
       toast({
         title: "Posted Successfully!",
-        description: `Your ${postType === 'reel' ? 'reel' : 'post'} has been published`,
+        description: `Your ${postType === "reel" ? "reel" : "post"} has been published`,
       });
 
       // Navigate to appropriate page
-      if (postType === 'reel') {
-        navigate('/timepass');
+      if (postType === "reel") {
+        navigate("/timepass");
       } else {
-        navigate('/profile');
+        navigate("/profile");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error posting:", error);
       toast({
         title: "Error",
@@ -250,7 +278,7 @@ export default function Create() {
       <div className="grid grid-cols-2 gap-4">
         {/* Image Post */}
         <button
-          onClick={() => handleFileSelect('image')}
+          onClick={() => handleFileSelect("image")}
           className="border-2 border-dashed border-border rounded-lg p-8 hover:border-primary hover:bg-secondary/50 transition-all"
         >
           <div className="flex flex-col items-center gap-3">
@@ -266,7 +294,7 @@ export default function Create() {
 
         {/* Reel */}
         <button
-          onClick={() => handleFileSelect('reel')}
+          onClick={() => handleFileSelect("reel")}
           className="border-2 border-dashed border-border rounded-lg p-8 hover:border-primary hover:bg-secondary/50 transition-all"
         >
           <div className="flex flex-col items-center gap-3">
@@ -275,7 +303,9 @@ export default function Create() {
             </div>
             <div>
               <h3 className="font-semibold text-lg">Reel</h3>
-              <p className="text-sm text-muted-foreground">9:16 Video (max 30s, 50MB)</p>
+              <p className="text-sm text-muted-foreground">
+                9:16 Video (max 30s, 50MB)
+              </p>
             </div>
           </div>
         </button>
@@ -284,7 +314,7 @@ export default function Create() {
       <input
         ref={fileInputRef}
         type="file"
-        accept={postType === 'image' ? 'image/*' : 'video/*'}
+        accept={postType === "image" ? "image/*" : "video/*"}
         onChange={handleFileChange}
         className="hidden"
       />
@@ -304,14 +334,23 @@ export default function Create() {
         {/* Preview */}
         <div className="space-y-4">
           <Label>Preview</Label>
-          <div className={`relative bg-muted rounded-lg overflow-hidden ${postType === 'reel' ? 'aspect-[9/16]' : 'aspect-square'}`}>
-            {selectedFile && (
-              postType === 'reel' ? (
-                <video src={previewUrl || ''} controls className="w-full h-full object-cover" />
+          <div
+            className={`relative bg-muted rounded-lg overflow-hidden ${postType === "reel" ? "aspect-[9/16]" : "aspect-square"}`}
+          >
+            {selectedFile &&
+              (postType === "reel" ? (
+                <video
+                  src={previewUrl || ""}
+                  controls
+                  className="w-full h-full object-cover"
+                />
               ) : (
-                <img src={previewUrl || ''} alt="Preview" className="w-full h-full object-cover" />
-              )
-            )}
+                <img
+                  src={previewUrl || ""}
+                  alt="Preview"
+                  className="w-full h-full object-cover"
+                />
+              ))}
           </div>
         </div>
 
@@ -349,7 +388,7 @@ export default function Create() {
           </div>
 
           {/* Music (for reels) */}
-          {postType === 'reel' && (
+          {postType === "reel" && (
             <div className="space-y-2">
               <Label htmlFor="music">Add Music (Optional)</Label>
               <div className="flex gap-2">
@@ -387,14 +426,22 @@ export default function Create() {
         {/* Preview */}
         <div className="space-y-4">
           <Label>Preview</Label>
-          <div className={`relative bg-muted rounded-lg overflow-hidden ${postType === 'reel' ? 'aspect-[9/16]' : 'aspect-square'}`}>
-            {selectedFile && (
-              postType === 'reel' ? (
-                <video src={previewUrl || ''} className="w-full h-full object-cover" />
+          <div
+            className={`relative bg-muted rounded-lg overflow-hidden ${postType === "reel" ? "aspect-[9/16]" : "aspect-square"}`}
+          >
+            {selectedFile &&
+              (postType === "reel" ? (
+                <video
+                  src={previewUrl || ""}
+                  className="w-full h-full object-cover"
+                />
               ) : (
-                <img src={previewUrl || ''} alt="Preview" className="w-full h-full object-cover" />
-              )
-            )}
+                <img
+                  src={previewUrl || ""}
+                  alt="Preview"
+                  className="w-full h-full object-cover"
+                />
+              ))}
           </div>
         </div>
 
@@ -425,7 +472,11 @@ export default function Create() {
                     onClick={() => handleTagUser(user.username)}
                     className="w-full flex items-center gap-3 p-3 hover:bg-secondary transition-colors"
                   >
-                    <img src={user.avatar} alt={user.username} className="h-10 w-10 rounded-full" />
+                    <img
+                      src={user.avatar}
+                      alt={user.username}
+                      className="h-10 w-10 rounded-full"
+                    />
                     <span className="font-semibold">{user.username}</span>
                   </button>
                 ))}
@@ -477,14 +528,23 @@ export default function Create() {
         {/* Preview */}
         <div className="space-y-4">
           <Label>Final Preview</Label>
-          <div className={`relative bg-muted rounded-lg overflow-hidden ${postType === 'reel' ? 'aspect-[9/16]' : 'aspect-square'}`}>
-            {selectedFile && (
-              postType === 'reel' ? (
-                <video src={previewUrl || ''} controls className="w-full h-full object-cover" />
+          <div
+            className={`relative bg-muted rounded-lg overflow-hidden ${postType === "reel" ? "aspect-[9/16]" : "aspect-square"}`}
+          >
+            {selectedFile &&
+              (postType === "reel" ? (
+                <video
+                  src={previewUrl || ""}
+                  controls
+                  className="w-full h-full object-cover"
+                />
               ) : (
-                <img src={previewUrl || ''} alt="Preview" className="w-full h-full object-cover" />
-              )
-            )}
+                <img
+                  src={previewUrl || ""}
+                  alt="Preview"
+                  className="w-full h-full object-cover"
+                />
+              ))}
           </div>
         </div>
 
@@ -492,41 +552,47 @@ export default function Create() {
         <div className="space-y-4">
           <div className="border border-border rounded-lg p-4 space-y-3">
             <h3 className="font-semibold">Summary</h3>
-            
+
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Type:</span>
                 <span className="font-medium capitalize">{postType}</span>
               </div>
-              
+
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Caption:</span>
-                <span className="font-medium">{caption ? `${caption.substring(0, 20)}...` : 'None'}</span>
+                <span className="font-medium">
+                  {caption ? `${caption.substring(0, 20)}...` : "None"}
+                </span>
               </div>
-              
+
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Comments:</span>
-                <span className="font-medium">{commentsEnabled ? 'Enabled' : 'Disabled'}</span>
+                <span className="font-medium">
+                  {commentsEnabled ? "Enabled" : "Disabled"}
+                </span>
               </div>
-              
+
               {selectedMusic && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Music:</span>
                   <span className="font-medium">{selectedMusic}</span>
                 </div>
               )}
-              
+
               {taggedUsers.length > 0 && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Tagged:</span>
-                  <span className="font-medium">{taggedUsers.length} people</span>
+                  <span className="font-medium">
+                    {taggedUsers.length} people
+                  </span>
                 </div>
               )}
             </div>
           </div>
 
-          <Button 
-            onClick={handlePost} 
+          <Button
+            onClick={handlePost}
             disabled={isPosting}
             className="w-full"
             size="lg"
@@ -545,7 +611,8 @@ export default function Create() {
           </Button>
 
           <p className="text-xs text-center text-muted-foreground">
-            By posting, you agree to our Terms of Service and Community Guidelines
+            By posting, you agree to our Terms of Service and Community
+            Guidelines
           </p>
         </div>
       </div>
@@ -569,7 +636,7 @@ export default function Create() {
             <div key={step} className="flex items-center">
               <div
                 className={`h-2 w-12 rounded-full transition-colors ${
-                  step <= currentStep ? 'bg-primary' : 'bg-muted'
+                  step <= currentStep ? "bg-primary" : "bg-muted"
                 }`}
               />
               {step < 4 && <div className="w-2" />}
@@ -591,8 +658,3 @@ export default function Create() {
     </div>
   );
 }
-
-
-
-
-

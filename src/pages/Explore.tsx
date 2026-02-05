@@ -7,77 +7,94 @@ import { getDatabase, ref, get } from "firebase/database";
 
 export default function Explore() {
   const { user } = useAuth();
-  const [posts, setPosts] = useState<any[]>([]);
-  const [allPostsData, setAllPostsData] = useState<any[]>([]);
+  type PostItem = {
+    id: string;
+    userId: string;
+    mediaUrl: string;
+    mediaType?: string;
+    postType?: string;
+    caption?: string;
+    likes?: number;
+    comments?: number;
+    createdAt: number;
+  };
+  const [posts, setPosts] = useState<PostItem[]>([]);
+  const [allPostsData, setAllPostsData] = useState<PostItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [displayedCount, setDisplayedCount] = useState(12);
   const [hasMorePosts, setHasMorePosts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  useEffect(() => {
-    const fetchPublicPosts = async () => {
-      if (!user) return;
+  const fetchPublicPosts = useCallback(async () => {
+    if (!user) return;
 
-      try {
-        const db = getDatabase();
+    try {
+      const db = getDatabase();
 
-        // Get all users to check privacy settings
-        const usersRef = ref(db, "users");
-        const usersSnapshot = await get(usersRef);
-        const usersData = usersSnapshot.exists() ? usersSnapshot.val() : {};
+      // Get all users to check privacy settings
+      const usersRef = ref(db, "users");
+      const usersSnapshot = await get(usersRef);
+      const usersData = (
+        usersSnapshot.exists()
+          ? (usersSnapshot.val() as Record<string, { accountPrivacy?: string }>)
+          : {}
+      ) as Record<string, { accountPrivacy?: string }>;
 
-        // Fetch all posts from Realtime Database
-        const postsRef = ref(db, "posts");
-        const postsSnapshot = await get(postsRef);
+      // Fetch all posts from Realtime Database
+      const postsRef = ref(db, "posts");
+      const postsSnapshot = await get(postsRef);
 
-        let allPostsArray: any[] = [];
+      let allPostsArray: PostItem[] = [];
 
-        if (postsSnapshot.exists()) {
-          const allPosts = postsSnapshot.val();
-          allPostsArray = Object.entries(allPosts)
-            .map(([id, post]: [string, any]) => ({
-              id,
-              ...post,
-            }))
-            .sort((a: any, b: any) => b.createdAt - a.createdAt);
-        }
-
-        const isVideoPost = (post: any) => {
-          if (post.mediaType === "video" || post.postType === "reel")
-            return true;
-          const mediaUrl = (post.mediaUrl || "").toLowerCase();
-          return /\.(mp4|mov|webm)$/.test(mediaUrl);
-        };
-
-        const isMediaUrlValid = (post: any) => {
-          const mediaUrl = (post.mediaUrl || "").toString().trim();
-          if (!mediaUrl) return false;
-          if (mediaUrl.includes("supabase.co/storage")) return false;
-          return true;
-        };
-
-        // Filter only public posts and remove videos from grid
-        const publicPosts = allPostsArray.filter((post: any) => {
-          const postUserId = post.userId;
-          const userData = usersData[postUserId];
-          const isPrivate = userData?.accountPrivacy === "private";
-
-          // Show only public posts
-          return !isPrivate && !isVideoPost(post) && isMediaUrlValid(post);
-        });
-
-        setAllPostsData(publicPosts);
-        setHasMorePosts(publicPosts.length > displayedCount);
-        setPosts(publicPosts.slice(0, displayedCount));
-      } catch (error) {
-        console.error("Error fetching public posts:", error);
-      } finally {
-        setLoading(false);
+      if (postsSnapshot.exists()) {
+        const allPosts = postsSnapshot.val() as Record<
+          string,
+          Omit<PostItem, "id">
+        >;
+        allPostsArray = Object.entries(allPosts)
+          .map(([id, post]) => ({
+            id,
+            ...post,
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt);
       }
-    };
 
+      const isVideoPost = (post: PostItem) => {
+        if (post.mediaType === "video" || post.postType === "reel") return true;
+        const mediaUrl = (post.mediaUrl || "").toLowerCase();
+        return /\.(mp4|mov|webm)$/.test(mediaUrl);
+      };
+
+      const isMediaUrlValid = (post: PostItem) => {
+        const mediaUrl = (post.mediaUrl || "").toString().trim();
+        if (!mediaUrl) return false;
+        if (mediaUrl.includes("supabase.co/storage")) return false;
+        return true;
+      };
+
+      // Filter only public posts and remove videos from grid
+      const publicPosts = allPostsArray.filter((post) => {
+        const postUserId = post.userId;
+        const userData = usersData[postUserId];
+        const isPrivate = userData?.accountPrivacy === "private";
+
+        // Show only public posts
+        return !isPrivate && !isVideoPost(post) && isMediaUrlValid(post);
+      });
+
+      setAllPostsData(publicPosts);
+      setHasMorePosts(publicPosts.length > displayedCount);
+      setPosts(publicPosts.slice(0, displayedCount));
+    } catch (error) {
+      console.error("Error fetching public posts:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, displayedCount]);
+
+  useEffect(() => {
     fetchPublicPosts();
-  }, [user]);
+  }, [fetchPublicPosts]);
 
   // Update displayed posts when count changes
   useEffect(() => {
