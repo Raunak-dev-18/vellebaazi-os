@@ -1,4 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  lazy,
+  Suspense,
+} from "react";
 import {
   Search,
   Send,
@@ -35,8 +42,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { uploadToChatStorage } from "@/lib/storage";
-import { DocumentCard, VideoCard, AudioCard } from "@/components/DocumentCard";
-import { ChatMarkdown } from "@/components/ChatMarkdown";
+import type { GifPick } from "@/components/chat/GifPicker";
 import {
   hasCognixMention,
   extractCognixQuery,
@@ -44,26 +50,37 @@ import {
   COGNIX_USER,
 } from "@/lib/ai";
 
+const DocumentCard = lazy(() =>
+  import("@/components/DocumentCard").then((module) => ({
+    default: module.DocumentCard,
+  })),
+);
+const VideoCard = lazy(() =>
+  import("@/components/DocumentCard").then((module) => ({
+    default: module.VideoCard,
+  })),
+);
+const AudioCard = lazy(() =>
+  import("@/components/DocumentCard").then((module) => ({
+    default: module.AudioCard,
+  })),
+);
+const ChatMarkdown = lazy(() =>
+  import("@/components/ChatMarkdown").then((module) => ({
+    default: module.ChatMarkdown,
+  })),
+);
+const GifPicker = lazy(() =>
+  import("@/components/chat/GifPicker").then((module) => ({
+    default: module.GifPicker,
+  })),
+);
+
 // Quick reaction emojis
 const QUICK_REACTIONS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
 
 // Giphy API
 const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
-
-interface GiphyGif {
-  id: string;
-  title: string;
-  images: {
-    fixed_height: {
-      url: string;
-      width: string;
-      height: string;
-    };
-    original: {
-      url: string;
-    };
-  };
-}
 
 interface LinkPreview {
   url: string;
@@ -168,9 +185,6 @@ export default function Bakaiti() {
   );
   const [hoveredMessage, setHoveredMessage] = useState<string | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
-  const [gifs, setGifs] = useState<GiphyGif[]>([]);
-  const [gifSearchQuery, setGifSearchQuery] = useState("");
-  const [isLoadingGifs, setIsLoadingGifs] = useState(false);
   const [activeReactionDetails, setActiveReactionDetails] = useState<{
     messageId: string;
     emoji: string;
@@ -184,8 +198,6 @@ export default function Bakaiti() {
   );
   const [forwardSearchQuery, setForwardSearchQuery] = useState("");
   const [isForwarding, setIsForwarding] = useState(false);
-  const [gifOffset, setGifOffset] = useState(0);
-  const [hasMoreGifs, setHasMoreGifs] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesTopRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -195,14 +207,11 @@ export default function Bakaiti() {
 
   const username = user?.displayName || user?.email?.split("@")[0] || "user";
 
-  // URL regex pattern
-  const urlRegex = /(https?:\/\/[^\s]+)/gi;
-
   // Extract first URL from text
-  const extractUrl = (text: string): string | null => {
-    const matches = text.match(urlRegex);
+  const extractUrl = useCallback((text: string): string | null => {
+    const matches = text.match(/(https?:\/\/[^\s]+)/gi);
     return matches ? matches[0] : null;
-  };
+  }, []);
 
   // Fetch link preview using a free API
   const fetchLinkPreview = useCallback(async (url: string) => {
@@ -251,6 +260,77 @@ export default function Bakaiti() {
     }
   }, []);
 
+  const openOrCreateChat = useCallback(
+    async (
+      otherUserId: string,
+      otherUsername: string,
+      otherUserAvatar: string,
+    ) => {
+      if (!user) return;
+
+      // Prevent self-messaging
+      if (otherUserId === user.uid) {
+        toast({
+          title: "Error",
+          description: "You cannot message yourself",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const db = getDatabase();
+
+      // Create a consistent chat ID (sorted user IDs)
+      const chatId = [user.uid, otherUserId].sort().join("_");
+
+      // Check if chat exists
+      const chatRef = ref(db, `userChats/${user.uid}/${chatId}`);
+      const snapshot = await get(chatRef);
+
+      // Fetch the latest user data to get current avatars
+      const otherUserRef = ref(db, `users/${otherUserId}`);
+      const otherUserSnapshot = await get(otherUserRef);
+      const otherUserData = otherUserSnapshot.val();
+      const currentOtherUserAvatar =
+        otherUserData?.photoURL ||
+        otherUserAvatar ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUsername}`;
+
+      const currentUserAvatar =
+        user.photoURL ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+
+      if (!snapshot.exists()) {
+        // Create new chat for both users
+        await set(ref(db, `userChats/${user.uid}/${chatId}`), {
+          otherUserId,
+          otherUsername,
+          otherUserAvatar: currentOtherUserAvatar,
+          lastMessage: "",
+          lastMessageTime: new Date().toISOString(),
+        });
+
+        await set(ref(db, `userChats/${otherUserId}/${chatId}`), {
+          otherUserId: user.uid,
+          otherUsername: username,
+          otherUserAvatar: currentUserAvatar,
+          lastMessage: "",
+          lastMessageTime: new Date().toISOString(),
+        });
+      }
+
+      setSelectedChat({
+        chatId,
+        otherUserId,
+        otherUsername,
+        otherUserAvatar: currentOtherUserAvatar,
+        lastMessage: "",
+        lastMessageTime: "",
+      });
+    },
+    [toast, user, username],
+  );
+
   // Detect URL in message text and fetch preview
   useEffect(() => {
     if (linkPreviewTimeoutRef.current) {
@@ -274,7 +354,7 @@ export default function Bakaiti() {
         clearTimeout(linkPreviewTimeoutRef.current);
       }
     };
-  }, [messageText, fetchLinkPreview]);
+  }, [messageText, fetchLinkPreview, extractUrl]);
 
   // Check if we need to open a chat from navigation state
   useEffect(() => {
@@ -286,7 +366,7 @@ export default function Bakaiti() {
       } = location.state.openChatWith;
       openOrCreateChat(userId, otherUsername, avatar);
     }
-  }, [location.state]);
+  }, [location.state, openOrCreateChat]);
 
   // Fetch user's chats with chunked loading
   useEffect(() => {
@@ -454,27 +534,8 @@ export default function Bakaiti() {
 
         // Store all messages data
         setAllMessagesData(sortedEntries);
-        setHasMoreMessages(sortedEntries.length > displayedCount);
-
-        // Show only the last N messages
-        const messagesToShow = sortedEntries.slice(-displayedCount);
-        const messagesArray: Message[] = messagesToShow.map(([id, data]) => ({
-          id,
-          senderId: data.senderId,
-          text: data.text,
-          timestamp: data.timestamp,
-          fileUrl: data.fileUrl,
-          fileName: data.fileName,
-          fileType: data.fileType,
-          reactions: data.reactions || {},
-          forwarded: data.forwarded || false,
-        }));
-
-        setMessages(messagesArray);
       } else {
-        setMessages([]);
         setAllMessagesData([]);
-        setHasMoreMessages(false);
       }
     });
 
@@ -483,7 +544,11 @@ export default function Bakaiti() {
 
   // Update displayed messages when count changes
   useEffect(() => {
-    if (allMessagesData.length === 0) return;
+    if (allMessagesData.length === 0) {
+      setHasMoreMessages(false);
+      setMessages([]);
+      return;
+    }
 
     setHasMoreMessages(allMessagesData.length > displayedCount);
 
@@ -515,90 +580,8 @@ export default function Bakaiti() {
     }, 200);
   };
 
-  // Fetch trending GIFs
-  const fetchTrendingGifs = async (loadMore = false) => {
-    if (!GIPHY_API_KEY) return;
-
-    // Only show full loading spinner for initial load, not for load more
-    if (!loadMore) {
-      setIsLoadingGifs(true);
-    }
-
-    try {
-      const currentOffset = loadMore ? gifOffset : 0;
-      const response = await fetch(
-        `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20&offset=${currentOffset}&rating=g`,
-      );
-      const data = await response.json();
-      const newGifs = data.data || [];
-
-      if (loadMore && newGifs.length > 0) {
-        setGifs((prev) => [...prev, ...newGifs]);
-      } else if (!loadMore) {
-        setGifs(newGifs);
-      }
-      setGifOffset(currentOffset + 20);
-      setHasMoreGifs(newGifs.length === 20);
-    } catch (error) {
-      console.error("Error fetching trending GIFs:", error);
-    } finally {
-      setIsLoadingGifs(false);
-    }
-  };
-
-  // Search GIFs
-  const searchGifs = async (query: string, loadMore = false) => {
-    if (!GIPHY_API_KEY || !query.trim()) {
-      fetchTrendingGifs(false);
-      return;
-    }
-
-    // Only show full loading spinner for initial load, not for load more
-    if (!loadMore) {
-      setIsLoadingGifs(true);
-    }
-
-    try {
-      const currentOffset = loadMore ? gifOffset : 0;
-      const response = await fetch(
-        `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
-      );
-      const data = await response.json();
-      const newGifs = data.data || [];
-
-      if (loadMore && newGifs.length > 0) {
-        setGifs((prev) => [...prev, ...newGifs]);
-      } else if (!loadMore) {
-        setGifs(newGifs);
-      }
-      setGifOffset(currentOffset + 20);
-      setHasMoreGifs(newGifs.length === 20);
-    } catch (error) {
-      console.error("Error searching GIFs:", error);
-    } finally {
-      setIsLoadingGifs(false);
-    }
-  };
-
-  const [isLoadingMoreGifs, setIsLoadingMoreGifs] = useState(false);
-
-  const loadMoreGifs = async () => {
-    if (isLoadingGifs || isLoadingMoreGifs || !hasMoreGifs) return;
-
-    setIsLoadingMoreGifs(true);
-    try {
-      if (gifSearchQuery.trim()) {
-        await searchGifs(gifSearchQuery, true);
-      } else {
-        await fetchTrendingGifs(true);
-      }
-    } finally {
-      setIsLoadingMoreGifs(false);
-    }
-  };
-
   // Send GIF as message
-  const sendGif = async (gif: GiphyGif) => {
+  const sendGif = async (gif: GifPick) => {
     if (!user || !selectedChat) return;
 
     try {
@@ -610,7 +593,7 @@ export default function Bakaiti() {
         senderId: user.uid,
         text: "",
         timestamp: new Date().toISOString(),
-        fileUrl: gif.images.original.url,
+        fileUrl: gif.url,
         fileName: gif.title || "GIF",
         fileType: "image/gif",
       };
@@ -643,7 +626,6 @@ export default function Bakaiti() {
       );
 
       setShowGifPicker(false);
-      setGifSearchQuery("");
     } catch (error) {
       console.error("Error sending GIF:", error);
       toast({
@@ -653,34 +635,6 @@ export default function Bakaiti() {
       });
     }
   };
-
-  // Load trending GIFs when picker opens
-  useEffect(() => {
-    if (showGifPicker) {
-      // Reset and load fresh GIFs when picker opens
-      setGifOffset(0);
-      setGifs([]);
-      setGifSearchQuery("");
-      fetchTrendingGifs(false);
-    }
-  }, [showGifPicker]);
-
-  // Debounced GIF search
-  useEffect(() => {
-    if (!showGifPicker) return;
-
-    const timer = setTimeout(() => {
-      setGifOffset(0);
-      setGifs([]);
-      if (gifSearchQuery.trim()) {
-        searchGifs(gifSearchQuery, false);
-      } else {
-        fetchTrendingGifs(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [gifSearchQuery]);
 
   // Add reaction to message
   const addReaction = async (messageId: string, emoji: string) => {
@@ -900,74 +854,6 @@ export default function Bakaiti() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, otherUserTyping]);
-
-  const openOrCreateChat = async (
-    otherUserId: string,
-    otherUsername: string,
-    otherUserAvatar: string,
-  ) => {
-    if (!user) return;
-
-    // Prevent self-messaging
-    if (otherUserId === user.uid) {
-      toast({
-        title: "Error",
-        description: "You cannot message yourself",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const db = getDatabase();
-
-    // Create a consistent chat ID (sorted user IDs)
-    const chatId = [user.uid, otherUserId].sort().join("_");
-
-    // Check if chat exists
-    const chatRef = ref(db, `userChats/${user.uid}/${chatId}`);
-    const snapshot = await get(chatRef);
-
-    // Fetch the latest user data to get current avatars
-    const otherUserRef = ref(db, `users/${otherUserId}`);
-    const otherUserSnapshot = await get(otherUserRef);
-    const otherUserData = otherUserSnapshot.val();
-    const currentOtherUserAvatar =
-      otherUserData?.photoURL ||
-      otherUserAvatar ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUsername}`;
-
-    const currentUserAvatar =
-      user.photoURL ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
-
-    if (!snapshot.exists()) {
-      // Create new chat for both users
-      await set(ref(db, `userChats/${user.uid}/${chatId}`), {
-        otherUserId,
-        otherUsername,
-        otherUserAvatar: currentOtherUserAvatar,
-        lastMessage: "",
-        lastMessageTime: new Date().toISOString(),
-      });
-
-      await set(ref(db, `userChats/${otherUserId}/${chatId}`), {
-        otherUserId: user.uid,
-        otherUsername: username,
-        otherUserAvatar: currentUserAvatar,
-        lastMessage: "",
-        lastMessageTime: new Date().toISOString(),
-      });
-    }
-
-    setSelectedChat({
-      chatId,
-      otherUserId,
-      otherUsername,
-      otherUserAvatar: currentOtherUserAvatar,
-      lastMessage: "",
-      lastMessageTime: "",
-    });
-  };
 
   const handleTyping = async () => {
     if (!user || !selectedChat) return;
@@ -1581,47 +1467,71 @@ export default function Bakaiti() {
                           {/* Video files */}
                           {message.fileUrl &&
                             message.fileType?.startsWith("video/") && (
-                              <VideoCard
-                                fileUrl={message.fileUrl}
-                                fileName={message.fileName || "Video"}
-                                isOwnMessage={message.senderId === user?.uid}
-                              />
+                              <Suspense
+                                fallback={
+                                  <div className="h-16 w-48 bg-muted/40 rounded-lg" />
+                                }
+                              >
+                                <VideoCard
+                                  fileUrl={message.fileUrl}
+                                  fileName={message.fileName || "Video"}
+                                  isOwnMessage={message.senderId === user?.uid}
+                                />
+                              </Suspense>
                             )}
                           {/* Audio files */}
                           {message.fileUrl &&
                             message.fileType?.startsWith("audio/") && (
-                              <AudioCard
-                                fileUrl={message.fileUrl}
-                                fileName={message.fileName || "Audio"}
-                                isOwnMessage={message.senderId === user?.uid}
-                              />
+                              <Suspense
+                                fallback={
+                                  <div className="h-12 w-48 bg-muted/40 rounded-lg" />
+                                }
+                              >
+                                <AudioCard
+                                  fileUrl={message.fileUrl}
+                                  fileName={message.fileName || "Audio"}
+                                  isOwnMessage={message.senderId === user?.uid}
+                                />
+                              </Suspense>
                             )}
                           {/* Document files (PDF, DOC, XLS, PPT, etc.) */}
                           {message.fileUrl &&
                             !message.fileType?.startsWith("image/") &&
                             !message.fileType?.startsWith("video/") &&
                             !message.fileType?.startsWith("audio/") && (
-                              <DocumentCard
-                                fileUrl={message.fileUrl}
-                                fileName={message.fileName || "Document"}
-                                fileType={message.fileType || ""}
-                                isOwnMessage={message.senderId === user?.uid}
-                              />
+                              <Suspense
+                                fallback={
+                                  <div className="h-12 w-56 bg-muted/40 rounded-lg" />
+                                }
+                              >
+                                <DocumentCard
+                                  fileUrl={message.fileUrl}
+                                  fileName={message.fileName || "Document"}
+                                  fileType={message.fileType || ""}
+                                  isOwnMessage={message.senderId === user?.uid}
+                                />
+                              </Suspense>
                             )}
                           {/* Message text with markdown support */}
                           {(message.text ||
                             (message.id === cognixMessageId &&
                               cognixStreamingMessage)) && (
                             <div className="text-sm break-words max-w-[300px]">
-                              <ChatMarkdown
-                                content={
-                                  message.id === cognixMessageId &&
-                                  cognixStreamingMessage
-                                    ? cognixStreamingMessage
-                                    : message.text
+                              <Suspense
+                                fallback={
+                                  <div className="h-4 w-32 bg-muted/40 rounded" />
                                 }
-                                isOwnMessage={message.senderId === user?.uid}
-                              />
+                              >
+                                <ChatMarkdown
+                                  content={
+                                    message.id === cognixMessageId &&
+                                    cognixStreamingMessage
+                                      ? cognixStreamingMessage
+                                      : message.text
+                                  }
+                                  isOwnMessage={message.senderId === user?.uid}
+                                />
+                              </Suspense>
                               {message.id === cognixMessageId &&
                                 cognixStreamingMessage && (
                                   <span className="inline-block w-2 h-4 bg-indigo-400 ml-1 animate-pulse" />
@@ -1918,77 +1828,19 @@ export default function Bakaiti() {
             <div className="border-t border-border p-4 relative">
               {/* GIF Picker */}
               {showGifPicker && (
-                <div className="absolute bottom-full left-4 mb-2 w-[320px] bg-background border border-border rounded-lg shadow-lg z-30 max-h-[300px] flex flex-col">
-                  <div className="p-2 border-b border-border">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-sm">GIFs</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => setShowGifPicker(false)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                <Suspense
+                  fallback={
+                    <div className="absolute bottom-full left-4 mb-2 w-[320px] bg-background border border-border rounded-lg shadow-lg z-30 max-h-[300px] flex items-center justify-center">
+                      <div className="h-6 w-6 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
                     </div>
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search GIFs..."
-                        value={gifSearchQuery}
-                        onChange={(e) => setGifSearchQuery(e.target.value)}
-                        className="pl-8 h-8 text-sm bg-secondary border-0"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-2">
-                    {isLoadingGifs ? (
-                      <div className="flex items-center justify-center py-6">
-                        <div className="h-6 w-6 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
-                      </div>
-                    ) : gifs.length === 0 ? (
-                      <div className="text-center py-6 text-muted-foreground text-sm">
-                        <p>No GIFs found</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-3 gap-1">
-                          {gifs.map((gif, index) => (
-                            <img
-                              key={`${gif.id}-${index}`}
-                              src={gif.images.fixed_height.url}
-                              alt={gif.title}
-                              className="w-full h-[80px] object-cover rounded cursor-pointer hover:opacity-80 transition-opacity"
-                              onClick={() => sendGif(gif)}
-                              loading="lazy"
-                            />
-                          ))}
-                        </div>
-                        {hasMoreGifs && (
-                          <button
-                            onClick={loadMoreGifs}
-                            disabled={isLoadingMoreGifs}
-                            className="w-full py-2 text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center justify-center gap-2"
-                          >
-                            {isLoadingMoreGifs ? (
-                              <>
-                                <div className="h-3 w-3 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-                                Loading...
-                              </>
-                            ) : (
-                              "Load More GIFs"
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-1 border-t border-border text-center">
-                    <span className="text-[10px] text-muted-foreground">
-                      Powered by R8 GIF
-                    </span>
-                  </div>
-                </div>
+                  }
+                >
+                  <GifPicker
+                    apiKey={GIPHY_API_KEY}
+                    onSelect={sendGif}
+                    onClose={() => setShowGifPicker(false)}
+                  />
+                </Suspense>
               )}
 
               {selectedFile && (
@@ -2039,9 +1891,8 @@ export default function Bakaiti() {
                   size="icon"
                   onClick={() => {
                     if (showGifPicker) {
-                      // Closing - reset state
+                      // Closing
                       setShowGifPicker(false);
-                      setGifSearchQuery("");
                     } else {
                       // Opening
                       setShowGifPicker(true);
