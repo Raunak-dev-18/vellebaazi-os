@@ -1,4 +1,4 @@
-import { Camera, Heart, MessageCircle, Users } from "lucide-react";
+import { Camera, Heart, MessageCircle } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 
@@ -12,11 +12,6 @@ export function MobileTopBar() {
       </Button>
       <h1 className="font-['Dancing_Script'] text-2xl leading-none">Velle Bazi</h1>
       <div className="flex items-center gap-1">
-        <Button asChild variant="ghost" size="icon" className="h-9 w-9">
-          <NavLink to="/groups" aria-label="Groups">
-            <Users className="h-5 w-5" />
-          </NavLink>
-        </Button>
         <Button asChild variant="ghost" size="icon" className="h-9 w-9">
           <NavLink to="/notifications" aria-label="Notifications">
             <Heart className="h-5 w-5" />

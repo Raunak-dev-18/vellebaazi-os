@@ -26,7 +26,6 @@ const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Create = lazy(() => import("./pages/Create"));
-const Groups = lazy(() => import("./pages/Groups"));
 
 // Page loading component
 function PageLoader() {
@@ -112,7 +111,6 @@ function AppContent() {
                           <Route path="/" element={<Home />} />
                           <Route path="/timepass" element={<Timepass />} />
                           <Route path="/bakaiti" element={<Bakaiti />} />
-                          <Route path="/groups" element={<Groups />} />
                           <Route path="/create" element={<Create />} />
                           <Route path="/profile" element={<Profile />} />
                           <Route path="/settings" element={<Settings />} />

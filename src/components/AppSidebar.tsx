@@ -9,7 +9,6 @@ import {
   PlusSquare,
   Settings,
   User,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NavLink } from "@/components/NavLink";
@@ -29,7 +28,6 @@ const navItems = [
   { title: "Explore", url: "/explore", icon: Compass },
   { title: "Timepass", url: "/timepass", icon: Film },
   { title: "Bakaiti", url: "/bakaiti", icon: MessageCircle },
-  { title: "Groups", url: "/groups", icon: Users },
   { title: "Notifications", url: "/notifications", icon: Heart },
   { title: "Create", url: "/create", icon: PlusSquare },
   { title: "Profile", url: "/profile", icon: User },
