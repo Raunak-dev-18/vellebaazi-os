@@ -3,6 +3,7 @@ import App from "./App.tsx";
 import "./index.css";
 
 const RUNTIME_RECOVERY_FLAG = "__vb_runtime_recovered_once";
+const PRELOAD_RECOVERY_FLAG = "__vb_preload_recovered_once";
 const SERVICE_WORKER_URL = "/sw.js?v=20260311-3";
 
 const clearServiceWorkersAndCaches = async () => {
@@ -50,7 +51,48 @@ const mountApp = () => {
   createRoot(document.getElementById("root")!).render(<App />);
 };
 
+const registerPreloadErrorRecovery = () => {
+  window.addEventListener("vite:preloadError", (event: Event) => {
+    event.preventDefault();
+    if (sessionStorage.getItem(PRELOAD_RECOVERY_FLAG) === "1") return;
+    if (!navigator.onLine) return;
+
+    sessionStorage.setItem(PRELOAD_RECOVERY_FLAG, "1");
+    clearServiceWorkersAndCaches()
+      .catch(() => {
+        // Ignore cleanup errors and continue recovery.
+      })
+      .finally(() => {
+        window.location.reload();
+      });
+  });
+};
+
+const registerRuntimeErrorRecovery = () => {
+  const recover = (error: unknown) => {
+    maybeRecoverFromRuntimeMismatch(error).catch(() => {
+      // Ignore recovery failures.
+    });
+  };
+
+  window.addEventListener("error", (event) => {
+    const candidate = event.error ?? event.message;
+    recover(candidate);
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    if (!isKnownRuntimeMismatch(toErrorMessage(reason))) return;
+
+    event.preventDefault();
+    recover(reason);
+  });
+};
+
 const bootstrap = async () => {
+  registerPreloadErrorRecovery();
+  registerRuntimeErrorRecovery();
+
   if (
     import.meta.env.DEV &&
     window.location.hostname !== "localhost" &&

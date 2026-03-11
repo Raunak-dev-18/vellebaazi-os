@@ -18,7 +18,6 @@ import {
   set,
   push,
   remove,
-  update,
   runTransaction,
 } from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
@@ -398,7 +397,7 @@ export function PostCard({
     try {
       setIsLikePending(true);
       const db = getDatabase();
-      const postRef = ref(db, `posts/${id}`);
+      const postLikesRef = ref(db, `posts/${id}/likes`);
       const likeRef = ref(db, `likes/${id}/${user.uid}`);
 
       const likeSnapshot = await get(likeRef);
@@ -407,16 +406,12 @@ export function PostCard({
       if (alreadyLiked) {
         // Unlike
         await remove(likeRef);
-        const result = await runTransaction(postRef, (postData) => {
-          const data = (postData || {}) as { likes?: number };
-          const nextLikes = Math.max(0, (data.likes || 0) - 1);
-          return { ...data, likes: nextLikes };
-        });
+        const result = await runTransaction(postLikesRef, (likesValue) =>
+          Math.max(0, (Number(likesValue) || 0) - 1),
+        );
 
         setIsLiked(false);
-        const nextLikes =
-          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
-          Math.max(0, likesCount - 1);
+        const nextLikes = Number(result.snapshot?.val()) || 0;
         setLikesCount(nextLikes);
       } else {
         // Like
@@ -426,16 +421,13 @@ export function PostCard({
           createdAt: Date.now(),
         });
 
-        const result = await runTransaction(postRef, (postData) => {
-          const data = (postData || {}) as { likes?: number };
-          const nextLikes = (data.likes || 0) + 1;
-          return { ...data, likes: nextLikes };
-        });
+        const result = await runTransaction(
+          postLikesRef,
+          (likesValue) => (Number(likesValue) || 0) + 1,
+        );
 
         setIsLiked(true);
-        const nextLikes =
-          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
-          likesCount + 1;
+        const nextLikes = Number(result.snapshot?.val()) || likesCount + 1;
         setLikesCount(nextLikes);
       }
     } catch (error: unknown) {
@@ -524,12 +516,8 @@ export function PostCard({
           });
         }
 
-        const postRef = ref(db, `posts/${id}`);
-        const postSnapshot = await get(postRef);
-        const currentComments = postSnapshot.val()?.comments || 0;
-
-        await update(postRef, {
-          comments: currentComments + 1,
+        await runTransaction(ref(db, `posts/${id}/comments`), (commentsValue) => {
+          return (Number(commentsValue) || 0) + 1;
         });
       }
 

@@ -17,7 +17,6 @@ import {
   getDatabase,
   ref,
   get,
-  update,
   push,
   set,
   remove,
@@ -207,20 +206,18 @@ export default function Timepass() {
       setLikePending((prev) => new Set(prev).add(postId));
       const db = getDatabase();
       const likeRef = ref(db, `likes/${postId}/${user.uid}`);
-      const postRef = ref(db, `posts/${postId}`);
+      const postLikesRef = ref(db, `posts/${postId}/likes`);
       const likeSnapshot = await get(likeRef);
       const isLiked = likeSnapshot.exists();
 
       if (isLiked) {
         // Unlike
         await remove(likeRef);
-        const result = await runTransaction(postRef, (postData) => {
-          const data = (postData || {}) as { likes?: number };
-          const nextLikes = Math.max(0, (data.likes || 0) - 1);
-          return { ...data, likes: nextLikes };
-        });
+        const result = await runTransaction(postLikesRef, (likesValue) =>
+          Math.max(0, (Number(likesValue) || 0) - 1),
+        );
         const nextLikes =
-          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          Number(result.snapshot?.val()) ||
           Math.max(0, (posts.find((p) => p.id === postId)?.likes || 0) - 1);
         setLikedPosts((prev) => {
           const newSet = new Set(prev);
@@ -239,13 +236,12 @@ export default function Timepass() {
           username: user.displayName || "user",
           createdAt: Date.now(),
         });
-        const result = await runTransaction(postRef, (postData) => {
-          const data = (postData || {}) as { likes?: number };
-          const nextLikes = (data.likes || 0) + 1;
-          return { ...data, likes: nextLikes };
-        });
+        const result = await runTransaction(
+          postLikesRef,
+          (likesValue) => (Number(likesValue) || 0) + 1,
+        );
         const nextLikes =
-          (result.snapshot?.val() as { likes?: number } | null)?.likes ??
+          Number(result.snapshot?.val()) ||
           (posts.find((p) => p.id === postId)?.likes || 0) + 1;
         setLikedPosts((prev) => new Set(prev).add(postId));
         setPosts((prev) =>
@@ -511,8 +507,10 @@ export default function Timepass() {
         // Update comment count
         const post = posts.find((p) => p.id === selectedPostId);
         if (post) {
-          const postRef = ref(db, `posts/${selectedPostId}`);
-          await update(postRef, { comments: post.comments + 1 });
+          await runTransaction(
+            ref(db, `posts/${selectedPostId}/comments`),
+            (commentsValue) => (Number(commentsValue) || 0) + 1,
+          );
         }
         await fetchPosts();
       }

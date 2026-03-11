@@ -36,7 +36,7 @@
       ".read": "auth != null",
       ".indexOn": ["createdAt", "userId", "postType", "mediaType"],
       "$postId": {
-        ".write": "auth != null && ((!data.exists() && newData.child('userId').val() === auth.uid) || (data.exists() && data.child('userId').val() === auth.uid) || (data.exists() && newData.child('userId').val() === data.child('userId').val() && newData.child('username').val() === data.child('username').val() && newData.child('userAvatar').val() === data.child('userAvatar').val() && newData.child('mediaUrl').val() === data.child('mediaUrl').val() && newData.child('mediaType').val() === data.child('mediaType').val() && newData.child('postType').val() === data.child('postType').val() && newData.child('caption').val() === data.child('caption').val() && newData.child('commentsEnabled').val() === data.child('commentsEnabled').val() && newData.child('music').val() === data.child('music').val() && newData.child('taggedUsers').val() === data.child('taggedUsers').val() && newData.child('createdAt').val() === data.child('createdAt').val()))",
+        ".write": "auth != null && ((!data.exists() && newData.child('userId').val() === auth.uid) || (data.exists() && data.child('userId').val() === auth.uid) || (data.exists() && newData.child('userId').val() === data.child('userId').val() && newData.child('username').val() === data.child('username').val() && newData.child('userAvatar').val() === data.child('userAvatar').val() && newData.child('mediaUrl').val() === data.child('mediaUrl').val() && newData.child('mediaType').val() === data.child('mediaType').val() && newData.child('postType').val() === data.child('postType').val() && newData.child('caption').val() === data.child('caption').val() && newData.child('commentsEnabled').val() === data.child('commentsEnabled').val() && newData.child('music').val() === data.child('music').val() && newData.child('createdAt').val() === data.child('createdAt').val() && (newData.child('likes').isNumber() || newData.child('likes').val() == null) && (newData.child('comments').isNumber() || newData.child('comments').val() == null) && (newData.child('views').isNumber() || newData.child('views').val() == null)))",
         "userId": { ".validate": "newData.isString()" },
         "username": { ".validate": "newData.isString()" },
         "userAvatar": { ".validate": "newData.isString() || newData.val() == null" },
@@ -250,7 +250,7 @@
 
     "groups": {
       "$groupId": {
-        ".write": "auth != null && ((!data.exists() && newData.child('createdBy').val() === auth.uid) || (data.exists() && root.child('groupMembers/' + $groupId + '/' + auth.uid + '/role').val() === 'admin'))",
+        ".write": "auth != null && ((!data.exists() && newData.child('createdBy').val() === auth.uid) || (data.exists() && (data.child('createdBy').val() === auth.uid || root.child('groupMembers/' + $groupId + '/' + auth.uid + '/role').val() === 'admin')))",
         ".read": "auth != null && root.child('groupMembers/' + $groupId + '/' + auth.uid).exists()",
         "name": {
           ".write": "auth != null && ((!data.exists() && newData.parent().child('createdBy').val() === auth.uid) || root.child('groupMembers/' + $groupId + '/' + auth.uid + '/role').val() === 'admin')",
@@ -331,7 +331,7 @@
 
     "closeFriends": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
+        ".read": "auth != null && (auth.uid === $uid || data.child(auth.uid).exists())",
         "$friendId": {
           ".read": "auth != null && (auth.uid === $uid || auth.uid === $friendId)",
           ".write": "auth != null && auth.uid === $uid",
@@ -376,10 +376,10 @@
             "keys": {
               "$uid": {
                 ".read": "auth != null && (($scope === 'dm' && root.child('userChats/' + auth.uid + '/' + $conversationId).exists()) || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
-                ".write": "auth != null && !data.exists() && (($scope === 'dm' && root.child('userChats/' + auth.uid + '/' + $conversationId).exists()) || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
+                ".write": "auth != null && (($scope === 'dm' && root.child('userChats/' + auth.uid + '/' + $conversationId).exists()) || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
                 "wrappedKey": { ".validate": "newData.isString()" },
                 "wrappedAt": { ".validate": "newData.isString() || newData.isNumber()" },
-                "wrappedBy": { ".validate": "newData.isString()" },
+                "wrappedBy": { ".validate": "newData.isString() && newData.val() === auth.uid" },
                 "alg": { ".validate": "newData.val() === 'RSA-OAEP'" },
                 "$other": { ".validate": true }
               }

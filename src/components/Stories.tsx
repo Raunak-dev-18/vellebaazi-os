@@ -63,6 +63,15 @@ interface StoryRecord {
   expiresAt: number;
 }
 
+const formatStoryAge = (createdAt: number) => {
+  const diffMs = Date.now() - createdAt;
+  const minutes = Math.max(1, Math.floor(diffMs / 60000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+};
+
 export function Stories() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -82,6 +91,7 @@ export function Stories() {
   const [currentStoryUser, setCurrentStoryUser] = useState<string | null>(null);
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [storyProgress, setStoryProgress] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -529,7 +539,7 @@ export function Stories() {
     setIsViewDialogOpen(true);
   };
 
-  const handleNextStory = () => {
+  const handleNextStory = useCallback(() => {
     if (!currentStoryUser) return;
     const userStories = stories[currentStoryUser];
 
@@ -547,9 +557,9 @@ export function Stories() {
         setIsViewDialogOpen(false);
       }
     }
-  };
+  }, [currentStoryIndex, currentStoryUser, stories]);
 
-  const handlePrevStory = () => {
+  const handlePrevStory = useCallback(() => {
     if (!currentStoryUser) return;
 
     if (currentStoryIndex > 0) {
@@ -564,13 +574,37 @@ export function Stories() {
         setCurrentStoryIndex(stories[prevUserId].length - 1);
       }
     }
-  };
+  }, [currentStoryIndex, currentStoryUser, stories]);
 
   const currentStory =
     currentStoryUser && stories[currentStoryUser]?.[currentStoryIndex];
   const hasOwnStory = user && stories[user.uid]?.length > 0;
   const ownLatestStory =
     hasOwnStory && user ? stories[user.uid][stories[user.uid].length - 1] : null;
+
+  useEffect(() => {
+    if (!isViewDialogOpen || !currentStory) {
+      setStoryProgress(0);
+      return;
+    }
+
+    const durationMs = currentStory.mediaType === "video" ? 10000 : 6000;
+    const tickMs = 100;
+    let elapsed = 0;
+    setStoryProgress(0);
+
+    const timer = window.setInterval(() => {
+      elapsed += tickMs;
+      const nextProgress = Math.min(100, (elapsed / durationMs) * 100);
+      setStoryProgress(nextProgress);
+      if (elapsed >= durationMs) {
+        window.clearInterval(timer);
+        handleNextStory();
+      }
+    }, tickMs);
+
+    return () => window.clearInterval(timer);
+  }, [currentStory, handleNextStory, isViewDialogOpen]);
 
   return (
     <>
@@ -796,27 +830,38 @@ export function Stories() {
 
       {/* View Story Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] p-0 bg-black">
+        <DialogContent className="border-0 bg-transparent p-0 shadow-none sm:max-w-[420px]">
           {currentStory && (
-            <div className="relative aspect-[9/16] max-h-[90vh]">
+            <div className="relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black">
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black/70 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-28 bg-gradient-to-t from-black/70 to-transparent" />
+
               {/* Story Progress Bars */}
-              <div className="absolute top-2 left-2 right-2 flex gap-1 z-10">
+              <div className="absolute left-3 right-3 top-3 z-20 flex gap-1">
                 {currentStoryUser &&
                   stories[currentStoryUser].map((_, index) => (
                     <div
                       key={index}
-                      className="flex-1 h-1 bg-white/30 rounded-full overflow-hidden"
+                      className="h-1 flex-1 overflow-hidden rounded-full bg-white/25"
                     >
                       <div
-                        className={`h-full bg-white transition-all ${index === currentStoryIndex ? "w-full" : index < currentStoryIndex ? "w-full" : "w-0"}`}
+                        className="h-full bg-white transition-[width] duration-100 ease-linear"
+                        style={{
+                          width:
+                            index < currentStoryIndex
+                              ? "100%"
+                              : index === currentStoryIndex
+                                ? `${storyProgress}%`
+                                : "0%",
+                        }}
                       />
                     </div>
                   ))}
               </div>
 
               {/* User Info */}
-              <div className="absolute top-6 left-4 right-4 flex items-center gap-2 z-10">
-                <Avatar className="h-10 w-10 border-2 border-white">
+              <div className="absolute left-4 right-4 top-7 z-20 flex items-center gap-3">
+                <Avatar className="h-9 w-9 border border-white/80">
                   <AvatarImage
                     src={getSafeAvatarUrl(
                       currentStory.userAvatar,
@@ -825,22 +870,21 @@ export function Stories() {
                   />
                   <AvatarFallback>{currentStory.username[0]}</AvatarFallback>
                 </Avatar>
-                <span className="text-white font-semibold">
+                <span className="max-w-[120px] truncate text-sm font-semibold text-white">
                   {currentStory.username}
                 </span>
                 {currentStory.audience === "close_friends" && (
-                  <span className="rounded-full bg-green-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                  <span className="rounded-full bg-green-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                     Close Friends
                   </span>
                 )}
-                <span className="text-white/70 text-sm ml-auto">
-                  {Math.floor((Date.now() - currentStory.createdAt) / 3600000)}h
-                  ago
+                <span className="ml-auto text-xs text-white/80">
+                  {formatStoryAge(currentStory.createdAt)}
                 </span>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-white hover:bg-white/20"
+                  className="h-8 w-8 text-white hover:bg-white/15"
                   onClick={() => setIsViewDialogOpen(false)}
                 >
                   <X className="h-5 w-5" />
@@ -851,34 +895,45 @@ export function Stories() {
               {currentStory.mediaType === "video" ? (
                 <video
                   src={currentStory.mediaUrl}
-                  className="w-full h-full object-contain"
+                  className="h-full w-full object-cover"
                   autoPlay
+                  muted
+                  playsInline
                 />
               ) : (
                 <img
                   src={currentStory.mediaUrl}
                   alt="Story"
-                  className="w-full h-full object-contain"
+                  className="h-full w-full object-cover"
                 />
               )}
 
               {/* Navigation */}
               <button
                 onClick={handlePrevStory}
-                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70"
+                className="absolute inset-y-0 left-0 z-20 w-1/2"
                 disabled={
                   currentStoryIndex === 0 &&
                   Object.keys(stories).indexOf(currentStoryUser!) === 0
                 }
+                aria-label="Previous story"
               >
-                <ChevronLeft className="h-6 w-6" />
+                <span className="sr-only">Previous story</span>
               </button>
               <button
                 onClick={handleNextStory}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70"
+                className="absolute inset-y-0 right-0 z-20 w-1/2"
+                aria-label="Next story"
               >
-                <ChevronRight className="h-6 w-6" />
+                <span className="sr-only">Next story</span>
               </button>
+
+              <div className="pointer-events-none absolute inset-y-0 left-2 z-20 flex items-center">
+                <ChevronLeft className="h-5 w-5 text-white/65" />
+              </div>
+              <div className="pointer-events-none absolute inset-y-0 right-2 z-20 flex items-center">
+                <ChevronRight className="h-5 w-5 text-white/65" />
+              </div>
             </div>
           )}
         </DialogContent>

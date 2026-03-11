@@ -1,6 +1,18 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Paperclip, Plus, Search, Send, Users, X } from "lucide-react";
-import { get, getDatabase, onValue, push, ref, set, update } from "firebase/database";
+import {
+  ArrowLeft,
+  Crown,
+  Loader2,
+  Paperclip,
+  Plus,
+  Search,
+  Send,
+  UserMinus,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
+import { get, getDatabase, onValue, push, ref, remove, set, update } from "firebase/database";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -78,6 +90,16 @@ interface UserOption {
   avatar: string;
 }
 
+interface GroupMemberEntry {
+  uid: string;
+  username: string;
+  avatar: string;
+  role: Role;
+  joinedAt?: string;
+}
+
+type FollowState = "self" | "none" | "following" | "requested";
+
 const timeAgo = (value: string) => {
   if (!value) return "";
   const d = new Date(value);
@@ -119,6 +141,15 @@ export default function Bakaiti() {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [blockedByMe, setBlockedByMe] = useState<Set<string>>(new Set());
   const [blockedMe, setBlockedMe] = useState<Set<string>>(new Set());
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<GroupMemberEntry[]>([]);
+  const [groupInfoLoading, setGroupInfoLoading] = useState(false);
+  const [groupMemberSearch, setGroupMemberSearch] = useState("");
+  const [selectedNewMembers, setSelectedNewMembers] = useState<Set<string>>(new Set());
+  const [memberActionLoading, setMemberActionLoading] = useState<string | null>(null);
+  const [addingMembers, setAddingMembers] = useState(false);
+  const [followStates, setFollowStates] = useState<Record<string, FollowState>>({});
+  const [privacyMap, setPrivacyMap] = useState<Record<string, "public" | "private">>({});
 
   const [fullImage, setFullImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -127,9 +158,29 @@ export default function Bakaiti() {
   const selectedConversation =
     conversations.find((c) => c.key === selectedKey) || null;
 
+  const isGroupConversation =
+    selectedConversation?.type === "group" ? selectedConversation : null;
+
+  const isCurrentUserGroupAdmin =
+    Boolean(
+      isGroupConversation &&
+        (groupMembers.find((m) => m.uid === user?.uid)?.role === "admin" ||
+          isGroupConversation.role === "admin"),
+    );
+
   const filteredUsers = users.filter((u) =>
     u.username.toLowerCase().includes(groupSearch.toLowerCase().trim()),
   );
+
+  const availableGroupCandidates = useMemo(() => {
+    const term = groupMemberSearch.toLowerCase().trim();
+    const existing = new Set(groupMembers.map((m) => m.uid));
+    return users.filter((entry) => {
+      if (existing.has(entry.uid)) return false;
+      if (!term) return true;
+      return entry.username.toLowerCase().includes(term);
+    });
+  }, [groupMemberSearch, groupMembers, users]);
 
   const filteredConversations = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -479,6 +530,338 @@ export default function Bakaiti() {
       });
   }, [db, location.state, selfAvatar, toast, user, username]);
 
+  const loadGroupDetails = useCallback(async () => {
+    if (!user || !isGroupConversation) return;
+
+    setGroupInfoLoading(true);
+    try {
+      const groupId = isGroupConversation.id;
+      const [membersSnapshot, usersSnapshot, followingSnapshot] = await Promise.all([
+        get(ref(db, `groupMembers/${groupId}`)),
+        get(ref(db, "users")),
+        get(ref(db, `following/${user.uid}`)),
+      ]);
+
+      if (!membersSnapshot.exists()) {
+        setGroupMembers([]);
+        setFollowStates({});
+        setPrivacyMap({});
+        return;
+      }
+
+      const membersRaw = membersSnapshot.val() as Record<string, Record<string, unknown>>;
+      const usersRaw = usersSnapshot.exists()
+        ? (usersSnapshot.val() as Record<string, Record<string, unknown>>)
+        : {};
+      const followingSet = new Set<string>(
+        followingSnapshot.exists()
+          ? Object.keys(followingSnapshot.val() as Record<string, unknown>)
+          : [],
+      );
+
+      const members: GroupMemberEntry[] = Object.entries(membersRaw).map(([uid, info]) => {
+        const userData = usersRaw[uid] || {};
+        const uname =
+          (info.username as string) ||
+          (userData.username as string) ||
+          ((userData.email as string) || "user@local").split("@")[0];
+        return {
+          uid,
+          username: uname,
+          avatar:
+            (info.avatar as string) ||
+            (userData.photoURL as string) ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${uname}`,
+          role: ((info.role as Role) || "member") as Role,
+          joinedAt: info.joinedAt as string | undefined,
+        };
+      });
+
+      members.sort((a, b) => {
+        if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+        return a.username.localeCompare(b.username);
+      });
+
+      const nextPrivacyMap: Record<string, "public" | "private"> = {};
+      members.forEach((entry) => {
+        const privacy = usersRaw[entry.uid]?.accountPrivacy as string | undefined;
+        nextPrivacyMap[entry.uid] = privacy === "private" ? "private" : "public";
+      });
+
+      const nextFollowStates: Record<string, FollowState> = {};
+      await Promise.all(
+        members.map(async (entry) => {
+          if (entry.uid === user.uid) {
+            nextFollowStates[entry.uid] = "self";
+            return;
+          }
+          if (followingSet.has(entry.uid)) {
+            nextFollowStates[entry.uid] = "following";
+            return;
+          }
+          if (nextPrivacyMap[entry.uid] === "private") {
+            const requestSnapshot = await get(
+              ref(db, `followRequests/${entry.uid}/${user.uid}`),
+            );
+            if (
+              requestSnapshot.exists() &&
+              (requestSnapshot.val()?.status as string | undefined) === "pending"
+            ) {
+              nextFollowStates[entry.uid] = "requested";
+              return;
+            }
+          }
+          nextFollowStates[entry.uid] = "none";
+        }),
+      );
+
+      setGroupMembers(members);
+      setFollowStates(nextFollowStates);
+      setPrivacyMap(nextPrivacyMap);
+    } catch (error) {
+      console.error("Failed to load group details:", error);
+      toast({
+        title: "Error",
+        description: "Unable to load group members.",
+        variant: "destructive",
+      });
+    } finally {
+      setGroupInfoLoading(false);
+    }
+  }, [db, isGroupConversation, toast, user]);
+
+  useEffect(() => {
+    if (!groupInfoOpen) return;
+    loadGroupDetails().catch((error) => {
+      console.error("Group details fetch failed:", error);
+    });
+  }, [groupInfoOpen, loadGroupDetails]);
+
+  const postSystemGroupMessage = useCallback(
+    async (groupId: string, text: string) => {
+      const now = new Date().toISOString();
+      await set(push(ref(db, `groupMessages/${groupId}`)), {
+        senderId: "system",
+        senderName: "System",
+        text,
+        timestamp: now,
+      });
+      await update(ref(db, `groups/${groupId}`), { updatedAt: now });
+    },
+    [db],
+  );
+
+  const handleFollowGroupMember = async (entry: GroupMemberEntry) => {
+    if (!user || entry.uid === user.uid) return;
+    const state = followStates[entry.uid] || "none";
+    if (state === "following" || state === "requested") return;
+
+    setMemberActionLoading(`follow:${entry.uid}`);
+    try {
+      const now = new Date().toISOString();
+      const targetPrivacy = privacyMap[entry.uid] || "public";
+
+      if (targetPrivacy === "private") {
+        const requestRef = ref(db, `followRequests/${entry.uid}/${user.uid}`);
+        const requestSnapshot = await get(requestRef);
+        if (!requestSnapshot.exists()) {
+          await set(requestRef, {
+            fromUserId: user.uid,
+            fromUsername: username,
+            fromAvatar: selfAvatar,
+            timestamp: now,
+            status: "pending",
+          });
+          await set(push(ref(db, `notifications/${entry.uid}`)), {
+            type: "follow_request",
+            fromUserId: user.uid,
+            fromUsername: username,
+            fromAvatar: selfAvatar,
+            timestamp: now,
+            read: false,
+            message: `${username} requested to follow you`,
+          });
+        }
+        setFollowStates((prev) => ({ ...prev, [entry.uid]: "requested" }));
+        return;
+      }
+
+      await Promise.all([
+        set(ref(db, `following/${user.uid}/${entry.uid}`), {
+          username: entry.username,
+          timestamp: now,
+        }),
+        set(ref(db, `followers/${entry.uid}/${user.uid}`), {
+          username,
+          timestamp: now,
+        }),
+        set(push(ref(db, `notifications/${entry.uid}`)), {
+          type: "follow",
+          fromUserId: user.uid,
+          fromUsername: username,
+          fromAvatar: selfAvatar,
+          timestamp: now,
+          read: false,
+          message: `${username} started following you`,
+        }),
+      ]);
+      setFollowStates((prev) => ({ ...prev, [entry.uid]: "following" }));
+    } catch (error) {
+      console.error("Follow action failed:", error);
+      toast({
+        title: "Error",
+        description: "Unable to follow this member right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setMemberActionLoading(null);
+    }
+  };
+
+  const updateGroupMemberRole = async (targetUid: string, role: Role) => {
+    if (!user || !isGroupConversation || !isCurrentUserGroupAdmin) return;
+    if (targetUid === user.uid) return;
+    const target = groupMembers.find((member) => member.uid === targetUid);
+    if (!target) return;
+
+    setMemberActionLoading(`role:${targetUid}`);
+    try {
+      await Promise.all([
+        set(ref(db, `groupMembers/${isGroupConversation.id}/${targetUid}/role`), role),
+        set(ref(db, `userGroups/${targetUid}/${isGroupConversation.id}/role`), role),
+      ]);
+      await postSystemGroupMessage(
+        isGroupConversation.id,
+        `${target.username} is now ${role}.`,
+      );
+      setGroupMembers((prev) =>
+        prev
+          .map((member) =>
+            member.uid === targetUid ? { ...member, role } : member,
+          )
+          .sort((a, b) => {
+            if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+            return a.username.localeCompare(b.username);
+          }),
+      );
+      toast({
+        title: "Role updated",
+        description: `${target.username} is now ${role}.`,
+      });
+    } catch (error) {
+      console.error("Role update failed:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update member role.",
+        variant: "destructive",
+      });
+    } finally {
+      setMemberActionLoading(null);
+    }
+  };
+
+  const removeGroupMember = async (targetUid: string) => {
+    if (!user || !isGroupConversation || !isCurrentUserGroupAdmin) return;
+    if (targetUid === user.uid) return;
+    const target = groupMembers.find((member) => member.uid === targetUid);
+    if (!target) return;
+
+    setMemberActionLoading(`remove:${targetUid}`);
+    try {
+      await Promise.all([
+        remove(ref(db, `groupMembers/${isGroupConversation.id}/${targetUid}`)),
+        remove(ref(db, `userGroups/${targetUid}/${isGroupConversation.id}`)),
+      ]);
+      await postSystemGroupMessage(
+        isGroupConversation.id,
+        `${target.username} was removed by ${username}.`,
+      );
+      setGroupMembers((prev) => prev.filter((member) => member.uid !== targetUid));
+      setSelectedNewMembers((prev) => {
+        const next = new Set(prev);
+        next.delete(targetUid);
+        return next;
+      });
+      toast({
+        title: "Member removed",
+        description: `${target.username} was removed from the group.`,
+      });
+    } catch (error) {
+      console.error("Remove member failed:", error);
+      toast({
+        title: "Error",
+        description: "Failed to remove member.",
+        variant: "destructive",
+      });
+    } finally {
+      setMemberActionLoading(null);
+    }
+  };
+
+  const addSelectedMembersToGroup = async () => {
+    if (!user || !isGroupConversation || !isCurrentUserGroupAdmin) return;
+    if (selectedNewMembers.size === 0) return;
+
+    setAddingMembers(true);
+    try {
+      const now = new Date().toISOString();
+      const selectedEntries = availableGroupCandidates.filter((entry) =>
+        selectedNewMembers.has(entry.uid),
+      );
+
+      await Promise.all(
+        selectedEntries.flatMap((entry) => [
+          set(ref(db, `groupMembers/${isGroupConversation.id}/${entry.uid}`), {
+            username: entry.username,
+            avatar: entry.avatar,
+            role: "member",
+            joinedAt: now,
+          }),
+          set(ref(db, `userGroups/${entry.uid}/${isGroupConversation.id}`), {
+            name: isGroupConversation.title,
+            role: "member",
+            joinedAt: now,
+            updatedAt: now,
+            lastMessage: "",
+          }),
+        ]),
+      );
+
+      await postSystemGroupMessage(
+        isGroupConversation.id,
+        `${username} added ${selectedEntries.map((entry) => entry.username).join(", ")}.`,
+      );
+
+      try {
+        await ensureConversationKey({
+          scope: "group",
+          conversationId: isGroupConversation.id,
+          participantIds: [user.uid, ...groupMembers.map((member) => member.uid), ...selectedEntries.map((entry) => entry.uid)],
+          currentUserId: user.uid,
+        });
+      } catch (error) {
+        console.error("Group key refresh after adding members failed:", error);
+      }
+
+      setSelectedNewMembers(new Set());
+      setGroupMemberSearch("");
+      await loadGroupDetails();
+      toast({
+        title: "Members added",
+        description: "Selected members were added to the group.",
+      });
+    } catch (error) {
+      console.error("Add members failed:", error);
+      toast({
+        title: "Error",
+        description: "Failed to add selected members.",
+        variant: "destructive",
+      });
+    } finally {
+      setAddingMembers(false);
+    }
+  };
+
   const sendMessage = async () => {
     if (!user || !selectedConversation) return;
     const text = messageText.trim();
@@ -816,6 +1199,22 @@ export default function Bakaiti() {
                   {e2eeEnabled ? "E2EE" : "Standard"}
                 </Badge>
               </div>
+              {selectedConversation.type === "group" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => {
+                    setGroupInfoOpen(true);
+                    loadGroupDetails().catch((error) => {
+                      console.error("Failed to open group info:", error);
+                    });
+                  }}
+                >
+                  <Users className="h-4 w-4" />
+                  Members
+                </Button>
+              )}
             </div>
 
             <ScrollArea className="flex-1 p-4">
@@ -930,6 +1329,228 @@ export default function Bakaiti() {
           <img src={fullImage} alt="Preview" className="max-h-full max-w-full object-contain" />
         </div>
       )}
+
+      <Dialog
+        open={groupInfoOpen}
+        onOpenChange={(open) => {
+          setGroupInfoOpen(open);
+          if (!open) {
+            setSelectedNewMembers(new Set());
+            setGroupMemberSearch("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              {isGroupConversation?.title || "Group"} members
+            </DialogTitle>
+            <DialogDescription>
+              {groupMembers.length} member{groupMembers.length === 1 ? "" : "s"} in this group.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {isCurrentUserGroupAdmin && (
+              <div className="rounded-lg border border-border p-3">
+                <p className="mb-2 text-sm font-medium">Add members</p>
+                <Input
+                  value={groupMemberSearch}
+                  onChange={(e) => setGroupMemberSearch(e.target.value)}
+                  placeholder="Search users to add..."
+                />
+                <ScrollArea className="mt-2 h-36 rounded-md border border-border p-2">
+                  <div className="space-y-1">
+                    {availableGroupCandidates.length === 0 ? (
+                      <p className="p-2 text-xs text-muted-foreground">
+                        No users available to add.
+                      </p>
+                    ) : (
+                      availableGroupCandidates.map((entry) => {
+                        const selected = selectedNewMembers.has(entry.uid);
+                        return (
+                          <button
+                            key={entry.uid}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left",
+                              selected ? "bg-primary/10" : "hover:bg-secondary",
+                            )}
+                            onClick={() => {
+                              setSelectedNewMembers((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(entry.uid)) next.delete(entry.uid);
+                                else next.add(entry.uid);
+                                return next;
+                              });
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-7 w-7">
+                                <AvatarImage src={entry.avatar} alt={entry.username} />
+                                <AvatarFallback>
+                                  {entry.username.slice(0, 1).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="text-sm">{entry.username}</span>
+                            </div>
+                            {selected && <Badge>Selected</Badge>}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </ScrollArea>
+                <Button
+                  className="mt-2 w-full gap-2"
+                  onClick={addSelectedMembersToGroup}
+                  disabled={addingMembers || selectedNewMembers.size === 0}
+                >
+                  {addingMembers ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <UserPlus className="h-4 w-4" />
+                  )}
+                  {addingMembers
+                    ? "Adding..."
+                    : `Add selected (${selectedNewMembers.size})`}
+                </Button>
+              </div>
+            )}
+
+            <ScrollArea className="h-72 rounded-lg border border-border p-2">
+              <div className="space-y-1">
+                {groupInfoLoading ? (
+                  <div className="flex items-center justify-center p-6 text-muted-foreground">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading members...
+                  </div>
+                ) : groupMembers.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">
+                    No members found.
+                  </p>
+                ) : (
+                  groupMembers
+                    .filter((member) =>
+                      member.username
+                        .toLowerCase()
+                        .includes(groupMemberSearch.toLowerCase().trim()),
+                    )
+                    .map((member) => {
+                      const followState = followStates[member.uid] || "none";
+                      const isSelf = member.uid === user?.uid;
+                      return (
+                        <div
+                          key={member.uid}
+                          className="flex items-center justify-between rounded-md px-2 py-2 hover:bg-secondary"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Avatar className="h-8 w-8">
+                              <AvatarImage src={member.avatar} alt={member.username} />
+                              <AvatarFallback>
+                                {member.username.slice(0, 1).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {member.username}
+                              </p>
+                              <div className="flex items-center gap-1">
+                                {member.role === "admin" ? (
+                                  <Badge variant="secondary" className="gap-1">
+                                    <Crown className="h-3 w-3" /> Admin
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline">Member</Badge>
+                                )}
+                                {isSelf && <Badge variant="outline">You</Badge>}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            {!isSelf && (
+                              <Button
+                                size="sm"
+                                variant={followState === "following" ? "secondary" : "outline"}
+                                disabled={
+                                  memberActionLoading === `follow:${member.uid}` ||
+                                  followState === "following" ||
+                                  followState === "requested"
+                                }
+                                onClick={() => handleFollowGroupMember(member)}
+                              >
+                                {memberActionLoading === `follow:${member.uid}` ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : followState === "following" ? (
+                                  "Following"
+                                ) : followState === "requested" ? (
+                                  "Requested"
+                                ) : (
+                                  "Follow"
+                                )}
+                              </Button>
+                            )}
+
+                            {isCurrentUserGroupAdmin && !isSelf && (
+                              <>
+                                {member.role === "member" ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={memberActionLoading === `role:${member.uid}`}
+                                    onClick={() => updateGroupMemberRole(member.uid, "admin")}
+                                  >
+                                    {memberActionLoading === `role:${member.uid}` ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      "Make Admin"
+                                    )}
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={memberActionLoading === `role:${member.uid}`}
+                                    onClick={() => updateGroupMemberRole(member.uid, "member")}
+                                  >
+                                    {memberActionLoading === `role:${member.uid}` ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      "Make Member"
+                                    )}
+                                  </Button>
+                                )}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  disabled={memberActionLoading === `remove:${member.uid}`}
+                                  onClick={() => removeGroupMember(member.uid)}
+                                >
+                                  {memberActionLoading === `remove:${member.uid}` ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <UserMinus className="h-4 w-4 text-destructive" />
+                                  )}
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupInfoOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-xl">
