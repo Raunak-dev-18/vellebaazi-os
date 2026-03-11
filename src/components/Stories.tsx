@@ -109,30 +109,37 @@ export function Stories() {
       const db = getDatabase();
       const storiesRef = ref(db, "stories");
       const snapshot = await get(storiesRef);
+      const followingSnapshot = await get(ref(db, `following/${user.uid}`));
+      const followingOwners = new Set<string>([user.uid]);
+
+      if (followingSnapshot.exists()) {
+        const following = followingSnapshot.val() as Record<string, unknown>;
+        Object.keys(following).forEach((uid) => followingOwners.add(uid));
+      }
 
       if (snapshot.exists()) {
         const allStories = snapshot.val() as Record<string, StoryRecord>;
         const now = Date.now();
-        const restrictedOwners = new Set<string>();
+        const ownersToCheck = new Set<string>();
 
         Object.values(allStories).forEach((story) => {
           if (
             story.expiresAt > now &&
-            story.audience === "close_friends" &&
+            !followingOwners.has(story.userId) &&
             story.userId !== user.uid
           ) {
-            restrictedOwners.add(story.userId);
+            ownersToCheck.add(story.userId);
           }
         });
 
-        const allowedCloseFriendsOwners = new Set<string>();
+        const closeFriendsOwners = new Set<string>();
         await Promise.all(
-          Array.from(restrictedOwners).map(async (ownerId) => {
+          Array.from(ownersToCheck).map(async (ownerId) => {
             const canViewSnapshot = await get(
               ref(db, `closeFriends/${ownerId}/${user.uid}`),
             );
             if (canViewSnapshot.exists()) {
-              allowedCloseFriendsOwners.add(ownerId);
+              closeFriendsOwners.add(ownerId);
             }
           }),
         );
@@ -143,11 +150,15 @@ export function Stories() {
         for (const [storyId, story] of Object.entries(allStories)) {
           if (story.expiresAt <= now) continue;
 
+          const isOwnStory = story.userId === user.uid;
+          const isFollowedOwner = followingOwners.has(story.userId);
+          const isCloseFriendOwner = closeFriendsOwners.has(story.userId);
           const isCloseFriendsOnly = story.audience === "close_friends";
+
           const canViewStory =
-            !isCloseFriendsOnly ||
-            story.userId === user.uid ||
-            allowedCloseFriendsOwners.has(story.userId);
+            isOwnStory ||
+            (isCloseFriendsOnly && isCloseFriendOwner) ||
+            (!isCloseFriendsOnly && (isFollowedOwner || isCloseFriendOwner));
 
           if (!canViewStory) {
             continue;

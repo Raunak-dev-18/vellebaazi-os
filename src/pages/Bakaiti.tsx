@@ -668,23 +668,35 @@ export default function Bakaiti() {
 
       const userMap = new Map(users.map((u) => [u.uid, u]));
       const members = [user.uid, ...Array.from(selectedMembers)];
-      await Promise.all(
-        members.map(async (uid) => {
-          const profile =
-            uid === user.uid
-              ? { username, avatar: selfAvatar }
-              : userMap.get(uid) || { username: "user", avatar: "" };
-          const role: Role = uid === user.uid ? "admin" : "member";
 
+      // Create creator membership first so admin-based rules are guaranteed
+      // before writing other members in environments with stricter latency.
+      await set(ref(db, `groupMembers/${groupId}/${user.uid}`), {
+        username,
+        avatar: selfAvatar,
+        role: "admin",
+        joinedAt: now,
+      });
+      await set(ref(db, `userGroups/${user.uid}/${groupId}`), {
+        name,
+        role: "admin",
+        joinedAt: now,
+        updatedAt: now,
+        lastMessage: "",
+      });
+
+      await Promise.all(
+        Array.from(selectedMembers).map(async (uid) => {
+          const profile = userMap.get(uid) || { username: "user", avatar: "" };
           await set(ref(db, `groupMembers/${groupId}/${uid}`), {
             username: profile.username,
             avatar: profile.avatar,
-            role,
+            role: "member",
             joinedAt: now,
           });
           await set(ref(db, `userGroups/${uid}/${groupId}`), {
             name,
-            role,
+            role: "member",
             joinedAt: now,
             updatedAt: now,
             lastMessage: "",
