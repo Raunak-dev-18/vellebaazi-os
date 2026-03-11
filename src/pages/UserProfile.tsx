@@ -20,6 +20,7 @@ import { useState, useEffect } from "react";
 import { getDatabase, ref, get, set, push, remove } from "firebase/database";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { blockUser, getBlockStatus, unblockUser } from "@/utils/blocking";
 
 interface UserRecord {
   username?: string;
@@ -85,6 +86,9 @@ export default function UserProfile() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isPrivateAccount, setIsPrivateAccount] = useState(false);
   const [canViewPosts, setCanViewPosts] = useState(true);
+  const [isBlockedByMe, setIsBlockedByMe] = useState(false);
+  const [hasBlockedMe, setHasBlockedMe] = useState(false);
+  const [blockActionLoading, setBlockActionLoading] = useState(false);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -104,6 +108,9 @@ export default function UserProfile() {
 
           if (userEntry) {
             const [uid, data] = userEntry;
+            const blockStatus = await getBlockStatus(user.uid, uid);
+            setIsBlockedByMe(blockStatus.blockedByMe);
+            setHasBlockedMe(blockStatus.blockedMe);
 
             // Check if current user is following this profile
             const followingRef = ref(db, `following/${user.uid}/${uid}`);
@@ -131,7 +138,9 @@ export default function UserProfile() {
 
             // Determine if current user can view posts
             const isOwnProfile = user.uid === uid;
-            const canView = isOwnProfile || !isPrivate || following;
+            const canView =
+              !blockStatus.blockedEither &&
+              (isOwnProfile || !isPrivate || following);
             setCanViewPosts(canView);
 
             // Fetch posts from Realtime Database only if user can view them
@@ -223,6 +232,17 @@ export default function UserProfile() {
       const db = getDatabase();
       const currentUsername =
         user.displayName || user.email?.split("@")[0] || "user";
+      const blockStatus = await getBlockStatus(user.uid, userData.uid);
+      if (blockStatus.blockedEither) {
+        toast({
+          title: "Action blocked",
+          description: blockStatus.blockedByMe
+            ? "Unblock this user first to follow."
+            : "You cannot follow this user.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       if (isFollowing) {
         // Unfollow
@@ -386,6 +406,60 @@ export default function UserProfile() {
     }
   };
 
+  const handleBlockToggle = async () => {
+    if (!user || !userData.uid || user.uid === userData.uid) return;
+    if (blockActionLoading) return;
+
+    setBlockActionLoading(true);
+    try {
+      const db = getDatabase();
+      if (isBlockedByMe) {
+        await unblockUser(user.uid, userData.uid);
+        setIsBlockedByMe(false);
+        setCanViewPosts(!isPrivateAccount || isFollowing);
+        toast({
+          title: "User Unblocked",
+          description: `You unblocked ${userData.username}.`,
+        });
+      } else {
+        await blockUser(user.uid, {
+          uid: userData.uid,
+          username: userData.username,
+          avatar: userData.avatar,
+        });
+
+        // Remove follow relations in both directions.
+        await Promise.all([
+          remove(ref(db, `following/${user.uid}/${userData.uid}`)),
+          remove(ref(db, `followers/${userData.uid}/${user.uid}`)),
+          remove(ref(db, `following/${userData.uid}/${user.uid}`)),
+          remove(ref(db, `followers/${user.uid}/${userData.uid}`)),
+          remove(ref(db, `followRequests/${user.uid}/${userData.uid}`)),
+          remove(ref(db, `followRequests/${userData.uid}/${user.uid}`)),
+        ]);
+
+        setIsBlockedByMe(true);
+        setIsFollowing(false);
+        setCanViewPosts(false);
+        setPosts([]);
+
+        toast({
+          title: "User Blocked",
+          description: `${userData.username} cannot follow or message you now.`,
+        });
+      }
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to update block status",
+        variant: "destructive",
+      });
+    } finally {
+      setBlockActionLoading(false);
+    }
+  };
+
   const fetchFollowersList = async () => {
     if (!userData.uid) return;
 
@@ -494,24 +568,40 @@ export default function UserProfile() {
                   This is you
                 </Button>
               ) : (
-                <Button
-                  className={
-                    isFollowing
-                      ? "bg-secondary hover:bg-secondary/80 text-foreground px-8"
-                      : "bg-blue-500 hover:bg-blue-600 text-white px-8"
-                  }
-                  onClick={handleFollowToggle}
-                  disabled={followActionLoading}
-                >
-                  {followActionLoading
-                    ? "Please wait..."
-                    : isFollowing
-                      ? "Following"
-                      : "Follow"}
-                </Button>
+                <>
+                  <Button
+                    className={
+                      isFollowing
+                        ? "bg-secondary hover:bg-secondary/80 text-foreground px-8"
+                        : "bg-blue-500 hover:bg-blue-600 text-white px-8"
+                    }
+                    onClick={handleFollowToggle}
+                    disabled={followActionLoading || isBlockedByMe || hasBlockedMe}
+                  >
+                    {hasBlockedMe
+                      ? "Unavailable"
+                      : followActionLoading
+                        ? "Please wait..."
+                        : isFollowing
+                          ? "Following"
+                          : "Follow"}
+                  </Button>
+                  <Button
+                    variant={isBlockedByMe ? "secondary" : "outline"}
+                    onClick={handleBlockToggle}
+                    disabled={blockActionLoading || hasBlockedMe}
+                  >
+                    {blockActionLoading
+                      ? "Please wait..."
+                      : isBlockedByMe
+                        ? "Unblock"
+                        : "Block"}
+                  </Button>
+                </>
               )}
               <Button
                 variant="outline"
+                disabled={isBlockedByMe || hasBlockedMe}
                 onClick={() =>
                   navigate("/bakaiti", {
                     state: {
@@ -586,7 +676,27 @@ export default function UserProfile() {
         </TabsList>
 
         <TabsContent value="posts" className="mt-0">
-          {!canViewPosts ? (
+          {hasBlockedMe ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="w-16 h-16 rounded-full border-2 border-foreground flex items-center justify-center mb-4">
+                <Grid3x3 className="h-8 w-8" />
+              </div>
+              <h3 className="text-2xl font-light mb-2">Profile Unavailable</h3>
+              <p className="text-muted-foreground text-sm text-center px-4">
+                This user has restricted interactions with your account.
+              </p>
+            </div>
+          ) : isBlockedByMe ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="w-16 h-16 rounded-full border-2 border-foreground flex items-center justify-center mb-4">
+                <Grid3x3 className="h-8 w-8" />
+              </div>
+              <h3 className="text-2xl font-light mb-2">User Blocked</h3>
+              <p className="text-muted-foreground text-sm text-center px-4">
+                Unblock {userData.username} to view their posts.
+              </p>
+            </div>
+          ) : !canViewPosts ? (
             <div className="flex flex-col items-center justify-center py-20">
               <div className="w-16 h-16 rounded-full border-2 border-foreground flex items-center justify-center mb-4">
                 <Grid3x3 className="h-8 w-8" />

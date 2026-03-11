@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { getDatabase, ref, get, set, push, remove } from "firebase/database";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { getBlockStatus } from "@/utils/blocking";
 
 interface Notification {
   id: string;
@@ -23,6 +24,7 @@ interface Notification {
   timestamp: string;
   read: boolean;
   status?: string;
+  message?: string;
 }
 
 interface NotificationRecord {
@@ -33,6 +35,7 @@ interface NotificationRecord {
   timestamp: string;
   read: boolean;
   status?: string;
+  message?: string;
 }
 
 interface NotificationsDialogProps {
@@ -137,6 +140,17 @@ export function NotificationsDialog({
       const db = getDatabase();
       const currentUsername =
         user.displayName || user.email?.split("@")[0] || "user";
+      const blockStatus = await getBlockStatus(user.uid, notification.fromUserId);
+      if (blockStatus.blockedEither) {
+        toast({
+          title: "Action blocked",
+          description: blockStatus.blockedByMe
+            ? "Unblock this user first."
+            : "You cannot follow this user.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       // Check if already following
       const followingRef = ref(
@@ -209,6 +223,17 @@ export function NotificationsDialog({
       const db = getDatabase();
       const currentUsername =
         user.displayName || user.email?.split("@")[0] || "user";
+      const blockStatus = await getBlockStatus(user.uid, notification.fromUserId);
+      if (blockStatus.blockedEither) {
+        toast({
+          title: "Action blocked",
+          description: blockStatus.blockedByMe
+            ? "Unblock this user first."
+            : "You cannot approve this request.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       // Add to following/followers
       await set(ref(db, `following/${notification.fromUserId}/${user.uid}`), {
@@ -401,6 +426,8 @@ export function NotificationsDialog({
                               "accepted your follow request."}
                             {notification.type === "follow_request_blocked" &&
                               "blocked you."}
+                            {notification.type === "privacy_update" &&
+                              (notification.message || "updated privacy settings.")}
                           </span>{" "}
                           <span className="text-muted-foreground text-xs">
                             {getTimeAgo(notification.timestamp)}

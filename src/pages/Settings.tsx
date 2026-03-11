@@ -784,6 +784,14 @@ export default function Settings() {
               )}
             </div>
           </div>
+
+          <div className="rounded-lg border border-border p-4">
+            <h3 className="font-semibold">Security</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Direct and group chat text messages now use client-side E2EE
+              envelopes. Close-friends stories are stored with encrypted media links.
+            </p>
+          </div>
         </div>
 
         {/* Save Button */}

@@ -227,6 +227,8 @@ export const ensureConversationKey = async (params: {
   const db = getDatabase();
   const myPath = getConversationKeyPath(scope, conversationId, currentUserId);
   const myKeySnapshot = await get(ref(db, myPath));
+  const keysRootPath = `e2ee/conversations/${scope}/${conversationId}/keys`;
+  const keysRootSnapshot = await get(ref(db, keysRootPath));
 
   if (myKeySnapshot.exists()) {
     const data = myKeySnapshot.val() as WrappedKeyRecord;
@@ -237,12 +239,29 @@ export const ensureConversationKey = async (params: {
     if (unwrapped) return unwrapped;
   }
 
-  const keyBytes = generateAesKeyBytes();
+  if (keysRootSnapshot.exists()) {
+    // Existing conversation key material is already present, but current user has no wrapped key.
+    // Avoid rotating and breaking old encrypted history for existing participants.
+    return null;
+  }
+
   const uniqueParticipants = Array.from(new Set(participantIds));
+  const participantPublicKeys = await Promise.all(
+    uniqueParticipants.map(async (uid) => ({
+      uid,
+      publicJwk: await getUserPublicJwk(uid),
+    })),
+  );
+
+  if (participantPublicKeys.some((entry) => !entry.publicJwk)) {
+    return null;
+  }
+
+  const keyBytes = generateAesKeyBytes();
   const now = new Date().toISOString();
 
   await Promise.all(
-    uniqueParticipants.map(async (uid) => {
+    participantPublicKeys.map(async ({ uid }) => {
       const wrappedKey = await encryptAesKeyForUser(keyBytes, uid);
       if (!wrappedKey) return;
       await set(ref(db, getConversationKeyPath(scope, conversationId, uid)), {
@@ -275,8 +294,19 @@ export const encryptForRecipients = async (params: {
   const wrappedKeys: Record<string, WrappedKeyRecord> = {};
 
   const uniqueRecipients = Array.from(new Set(recipientUserIds));
+  const recipientPublicKeys = await Promise.all(
+    uniqueRecipients.map(async (uid) => ({
+      uid,
+      publicJwk: await getUserPublicJwk(uid),
+    })),
+  );
+
+  if (recipientPublicKeys.some((entry) => !entry.publicJwk)) {
+    return null;
+  }
+
   await Promise.all(
-    uniqueRecipients.map(async (uid) => {
+    recipientPublicKeys.map(async ({ uid }) => {
       const wrappedKey = await encryptAesKeyForUser(keyBytes, uid);
       if (!wrappedKey) return;
       wrappedKeys[uid] = {
@@ -317,4 +347,3 @@ export const decryptFromRecipientPayload = async (params: {
     keyBytes,
   );
 };
-

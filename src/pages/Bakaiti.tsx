@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Paperclip, Plus, Search, Send, Users, X } from "lucide-react";
 import { get, getDatabase, onValue, push, ref, set, update } from "firebase/database";
 import { useLocation } from "react-router-dom";
@@ -9,6 +9,14 @@ import { uploadToChatStorage } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { extractMentions } from "@/utils/mentions";
 import { sendMentionNotifications } from "@/utils/mentionNotifications";
+import {
+  decryptTextWithKey,
+  encryptTextWithKey,
+  ensureConversationKey,
+  ensureUserE2EEIdentity,
+} from "@/utils/e2ee";
+import { getBlockMapsForUser, getBlockStatus } from "@/utils/blocking";
+import { parseChatMessage, parseGroupName } from "@/utils/validation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +55,9 @@ interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: string;
+  encryptedText?: string;
+  encryptedIv?: string;
+  encryption?: string;
   fileUrl?: string;
   fileName?: string;
   fileType?: string;
@@ -82,6 +93,8 @@ export default function Bakaiti() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationKey, setConversationKey] = useState<Uint8Array | null>(null);
+  const [e2eeEnabled, setE2eeEnabled] = useState(false);
   const [search, setSearch] = useState("");
   const [messageText, setMessageText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -95,6 +108,8 @@ export default function Bakaiti() {
   const [groupSearch, setGroupSearch] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [blockedByMe, setBlockedByMe] = useState<Set<string>>(new Set());
+  const [blockedMe, setBlockedMe] = useState<Set<string>>(new Set());
 
   const [fullImage, setFullImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,12 +134,60 @@ export default function Bakaiti() {
   }, [conversations, search]);
 
   useEffect(() => {
+    if (!selectedConversation || selectedConversation.type !== "dm") return;
+    if (!selectedConversation.otherUserId) return;
+    if (
+      blockedByMe.has(selectedConversation.otherUserId) ||
+      blockedMe.has(selectedConversation.otherUserId)
+    ) {
+      setSelectedKey(null);
+    }
+  }, [blockedByMe, blockedMe, selectedConversation]);
+
+  const resolveConversationParticipants = useCallback(
+    async (conversation: Conversation) => {
+      if (!user) return [] as string[];
+      if (conversation.type === "dm") {
+        return [user.uid, conversation.otherUserId || ""].filter(Boolean);
+      }
+
+      const membersSnapshot = await get(ref(db, `groupMembers/${conversation.id}`));
+      if (!membersSnapshot.exists()) {
+        return [user.uid];
+      }
+      const members = membersSnapshot.val() as Record<string, unknown>;
+      return Object.keys(members);
+    },
+    [db, user],
+  );
+
+  useEffect(() => {
+    if (!user) return;
+    ensureUserE2EEIdentity(user.uid)
+      .then((ok) => setE2eeEnabled(Boolean(ok)))
+      .catch(() => setE2eeEnabled(false));
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    getBlockMapsForUser(user.uid)
+      .then((maps) => {
+        setBlockedByMe(maps.blockedByMe);
+        setBlockedMe(maps.blockedMe);
+      })
+      .catch(() => {
+        setBlockedByMe(new Set());
+        setBlockedMe(new Set());
+      });
+  }, [user]);
+
+  useEffect(() => {
     if (!user) return;
     get(ref(db, "users")).then((snap) => {
       if (!snap.exists()) return;
       const data = snap.val() as Record<string, Record<string, unknown>>;
       const list = Object.entries(data)
-        .filter(([uid]) => uid !== user.uid)
+        .filter(([uid]) => uid !== user.uid && !blockedByMe.has(uid) && !blockedMe.has(uid))
         .map(([uid, v]) => {
           const localName =
             (v.username as string) || ((v.email as string) || "user@local").split("@")[0];
@@ -138,7 +201,7 @@ export default function Bakaiti() {
         });
       setUsers(list);
     });
-  }, [db, user]);
+  }, [blockedByMe, blockedMe, db, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -174,7 +237,12 @@ export default function Bakaiti() {
           lastMessage: (v.lastMessage as string) || "",
           lastMessageTime: (v.lastMessageTime as string) || "",
         }))
-        .filter((c) => c.otherUserId !== user.uid);
+        .filter(
+          (c) =>
+            c.otherUserId !== user.uid &&
+            !blockedByMe.has(c.otherUserId || "") &&
+            !blockedMe.has(c.otherUserId || ""),
+        );
       merge();
     });
 
@@ -215,7 +283,7 @@ export default function Bakaiti() {
       unsubDm();
       unsubGroup();
     };
-  }, [db, user]);
+  }, [blockedByMe, blockedMe, db, user]);
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -232,26 +300,115 @@ export default function Bakaiti() {
         return;
       }
       const data = snap.val() as Record<string, Record<string, unknown>>;
-      const list = Object.entries(data)
+      const rawList = Object.entries(data)
         .map(([id, v]) => ({
           id,
           senderId: (v.senderId as string) || "system",
           senderName: (v.senderName as string) || "System",
           text: (v.text as string) || "",
           timestamp: (v.timestamp as string) || "",
+          encryptedText: v.encryptedText as string | undefined,
+          encryptedIv: v.encryptedIv as string | undefined,
+          encryption: v.encryption as string | undefined,
           fileUrl: v.fileUrl as string | undefined,
           fileName: v.fileName as string | undefined,
           fileType: v.fileType as string | undefined,
         }))
-        .filter((m) => m.text || m.fileUrl)
         .sort(
           (a, b) =>
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
         );
-      setMessages(list);
+
+      const decode = async () => {
+        const decoded = await Promise.all(
+          rawList.map(async (message) => {
+            if (message.senderId === "system") {
+              return message;
+            }
+
+            if (message.text) {
+              return message;
+            }
+
+            if (
+              message.encryptedText &&
+              message.encryptedIv &&
+              conversationKey &&
+              message.encryption === "e2ee_v1"
+            ) {
+              try {
+                const decryptedText = await decryptTextWithKey(
+                  {
+                    ciphertext: message.encryptedText,
+                    iv: message.encryptedIv,
+                  },
+                  conversationKey,
+                );
+                return { ...message, text: decryptedText };
+              } catch {
+                return { ...message, text: "[Unable to decrypt message]" };
+              }
+            }
+
+            if (message.encryptedText) {
+              return { ...message, text: "[Encrypted message]" };
+            }
+
+            return message;
+          }),
+        );
+
+        setMessages(decoded.filter((entry) => entry.text || entry.fileUrl));
+      };
+
+      decode().catch((error) => {
+        console.error("Failed to decode messages:", error);
+      });
     });
     return () => unsub();
-  }, [db, selectedConversation]);
+  }, [conversationKey, db, selectedConversation]);
+
+  useEffect(() => {
+    if (!user || !selectedConversation) {
+      setConversationKey(null);
+      return;
+    }
+
+    let active = true;
+    const setupKey = async () => {
+      try {
+        if (
+          selectedConversation.type === "dm" &&
+          selectedConversation.otherUserId &&
+          (blockedByMe.has(selectedConversation.otherUserId) ||
+            blockedMe.has(selectedConversation.otherUserId))
+        ) {
+          setConversationKey(null);
+          return;
+        }
+
+        const participants =
+          (await resolveConversationParticipants(selectedConversation)) || [user.uid];
+        const key = await ensureConversationKey({
+          scope: selectedConversation.type,
+          conversationId: selectedConversation.id,
+          participantIds: participants,
+          currentUserId: user.uid,
+        });
+        if (active) {
+          setConversationKey(key);
+        }
+      } catch (error) {
+        console.error("E2EE setup failed:", error);
+        if (active) setConversationKey(null);
+      }
+    };
+
+    setupKey();
+    return () => {
+      active = false;
+    };
+  }, [blockedByMe, blockedMe, resolveConversationParticipants, selectedConversation, user]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -266,8 +423,23 @@ export default function Bakaiti() {
       open.avatar ||
       `https://api.dicebear.com/7.x/avataaars/svg?seed=${open.username}`;
 
-    get(ref(db, `userChats/${user.uid}/${chatId}`))
+    getBlockStatus(user.uid, open.userId)
+      .then((status) => {
+        if (status.blockedEither) {
+          toast({
+            title: "Action blocked",
+            description: status.blockedByMe
+              ? "Unblock this user first to chat."
+              : "You cannot chat with this user.",
+            variant: "destructive",
+          });
+          return Promise.resolve(null);
+        }
+
+        return get(ref(db, `userChats/${user.uid}/${chatId}`));
+      })
       .then(async (snapshot) => {
+        if (!snapshot) return;
         if (!snapshot.exists()) {
           await set(ref(db, `userChats/${user.uid}/${chatId}`), {
             otherUserId: open.userId,
@@ -284,20 +456,50 @@ export default function Bakaiti() {
             lastMessageTime: now,
           });
         }
+        await ensureConversationKey({
+          scope: "dm",
+          conversationId: chatId,
+          participantIds: [user.uid, open.userId],
+          currentUserId: user.uid,
+        });
         setSelectedKey(`dm:${chatId}`);
       })
       .catch(() => {
         setSelectedKey(`dm:${chatId}`);
       });
-  }, [db, location.state, selfAvatar, user, username]);
+  }, [db, location.state, selfAvatar, toast, user, username]);
 
   const sendMessage = async () => {
     if (!user || !selectedConversation) return;
     const text = messageText.trim();
-    if (!text && !selectedFile) return;
+    const textValidation = parseChatMessage(text);
+    if (!textValidation.success) {
+      toast({
+        title: "Invalid message",
+        description: textValidation.error.issues[0]?.message || "Invalid message",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!textValidation.data && !selectedFile) return;
     if (sending) return;
     setSending(true);
     try {
+      if (
+        selectedConversation.type === "dm" &&
+        selectedConversation.otherUserId &&
+        (blockedByMe.has(selectedConversation.otherUserId) ||
+          blockedMe.has(selectedConversation.otherUserId))
+      ) {
+        toast({
+          title: "Action blocked",
+          description: "You cannot send messages in this conversation.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const now = new Date().toISOString();
       let fileUrl = "";
       if (selectedFile) {
@@ -308,11 +510,39 @@ export default function Bakaiti() {
         );
       }
 
+      let finalText = textValidation.data;
+      let encryptedText: string | undefined;
+      let encryptedIv: string | undefined;
+      let encryption: string | undefined;
+
+      let activeKey = conversationKey;
+      if (!activeKey && finalText) {
+        const participants = await resolveConversationParticipants(selectedConversation);
+        activeKey = await ensureConversationKey({
+          scope: selectedConversation.type,
+          conversationId: selectedConversation.id,
+          participantIds: participants,
+          currentUserId: user.uid,
+        });
+        setConversationKey(activeKey);
+      }
+
+      if (activeKey && finalText) {
+        const encryptedPayload = await encryptTextWithKey(finalText, activeKey);
+        encryptedText = encryptedPayload.ciphertext;
+        encryptedIv = encryptedPayload.iv;
+        encryption = "e2ee_v1";
+        finalText = "";
+      }
+
       const msg = {
         senderId: user.uid,
         senderName: username,
-        text: text || (selectedFile ? "Sent an attachment" : ""),
+        text: finalText || (selectedFile ? "Sent an attachment" : ""),
         timestamp: now,
+        encryptedText,
+        encryptedIv,
+        encryption,
         fileUrl: fileUrl || undefined,
         fileName: selectedFile?.name,
         fileType: selectedFile?.type,
@@ -324,7 +554,7 @@ export default function Bakaiti() {
           : `messages/${selectedConversation.id}`;
       await set(push(ref(db, path)), msg);
 
-      const preview = text || (selectedFile ? `Attachment: ${selectedFile.name}` : "");
+      const preview = textValidation.data || (selectedFile ? `Attachment: ${selectedFile.name}` : "");
       if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
         await Promise.all([
           set(ref(db, `userChats/${user.uid}/${selectedConversation.id}/lastMessage`), preview),
@@ -360,13 +590,13 @@ export default function Bakaiti() {
             ),
           );
 
-          const usernamesInMessage = extractMentions(text);
+          const usernamesInMessage = extractMentions(textValidation.data);
           if (usernamesInMessage.length > 0) {
             await sendMentionNotifications({
               actorUserId: user.uid,
               actorUsername: username,
               actorAvatar: selfAvatar,
-              text,
+              text: textValidation.data,
               sourceType: "group_message",
               sourceId: selectedConversation.id,
               groupId: selectedConversation.id,
@@ -397,15 +627,19 @@ export default function Bakaiti() {
 
   const createGroup = async () => {
     if (!user) return;
-    const name = groupName.trim();
-    if (name.length < 3 || selectedMembers.size === 0) {
+    const parsedName = parseGroupName(groupName);
+    if (!parsedName.success || selectedMembers.size === 0) {
       toast({
         title: "Invalid group",
-        description: "Use valid name and select members",
+        description:
+          parsedName.success
+            ? "Select at least one member."
+            : parsedName.error.issues[0]?.message || "Use valid name and select members",
         variant: "destructive",
       });
       return;
     }
+    const name = parsedName.data;
 
     setCreatingGroup(true);
     try {
@@ -453,6 +687,13 @@ export default function Bakaiti() {
         senderName: "System",
         text: `${username} created the group.`,
         timestamp: now,
+      });
+
+      await ensureConversationKey({
+        scope: "group",
+        conversationId: groupId,
+        participantIds: members,
+        currentUserId: user.uid,
       });
 
       setCreateOpen(false);
@@ -539,6 +780,9 @@ export default function Bakaiti() {
                 {selectedConversation.type === "group" && selectedConversation.role && (
                   <Badge variant="outline">{selectedConversation.role}</Badge>
                 )}
+                <Badge variant={e2eeEnabled ? "secondary" : "outline"}>
+                  {e2eeEnabled ? "E2EE" : "Standard"}
+                </Badge>
               </div>
             </div>
 

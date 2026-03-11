@@ -18,6 +18,11 @@ import { useToast } from "@/hooks/use-toast";
 import { StoryEditor } from "@/components/StoryEditor";
 import { getSafeAvatarUrl } from "@/utils/media";
 import { sendMentionNotifications } from "@/utils/mentionNotifications";
+import {
+  decryptFromRecipientPayload,
+  encryptForRecipients,
+  ensureUserE2EEIdentity,
+} from "@/utils/e2ee";
 
 interface Story {
   id: string;
@@ -26,6 +31,13 @@ interface Story {
   userAvatar: string;
   mediaUrl: string;
   mediaType: "image" | "video";
+  encryptedMediaUrl?: string;
+  encryptedMediaIv?: string;
+  encryptedMediaKeys?: Record<
+    string,
+    { wrappedKey: string; wrappedAt: string; wrappedBy: string; alg: "RSA-OAEP" }
+  >;
+  isEncrypted?: boolean;
   audience?: "public" | "close_friends";
   mentions?: string[];
   createdAt: number;
@@ -38,6 +50,13 @@ interface StoryRecord {
   userAvatar: string;
   mediaUrl: string;
   mediaType: "image" | "video";
+  encryptedMediaUrl?: string;
+  encryptedMediaIv?: string;
+  encryptedMediaKeys?: Record<
+    string,
+    { wrappedKey: string; wrappedAt: string; wrappedBy: string; alg: "RSA-OAEP" }
+  >;
+  isEncrypted?: boolean;
   audience?: "public" | "close_friends";
   mentions?: string[];
   createdAt: number;
@@ -63,6 +82,25 @@ export function Stories() {
   const [currentStoryUser, setCurrentStoryUser] = useState<string | null>(null);
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    ensureUserE2EEIdentity(user.uid).catch(() => {
+      // Keep stories functional even if crypto key setup fails.
+    });
+  }, [user]);
+
+  const resolveCloseFriendsRecipients = useCallback(async () => {
+    if (!user) return [user?.uid].filter(Boolean) as string[];
+    const db = getDatabase();
+    const snapshot = await get(ref(db, `closeFriends/${user.uid}`));
+    const recipients = new Set<string>([user.uid]);
+    if (snapshot.exists()) {
+      const closeFriends = snapshot.val() as Record<string, unknown>;
+      Object.keys(closeFriends).forEach((uid) => recipients.add(uid));
+    }
+    return Array.from(recipients);
+  }, [user]);
 
   const fetchStories = useCallback(async () => {
     if (!user) return;
@@ -99,30 +137,53 @@ export function Stories() {
           }),
         );
 
-        // Group stories by user and filter expired ones
+        // Group stories by user and filter expired/unauthorized ones.
         const groupedStories: { [userId: string]: Story[] } = {};
 
-        Object.entries(allStories).forEach(([storyId, story]) => {
-          if (story.expiresAt > now) {
-            const isCloseFriendsOnly = story.audience === "close_friends";
-            const canViewStory =
-              !isCloseFriendsOnly ||
-              story.userId === user.uid ||
-              allowedCloseFriendsOwners.has(story.userId);
+        for (const [storyId, story] of Object.entries(allStories)) {
+          if (story.expiresAt <= now) continue;
 
-            if (!canViewStory) {
-              return;
-            }
+          const isCloseFriendsOnly = story.audience === "close_friends";
+          const canViewStory =
+            !isCloseFriendsOnly ||
+            story.userId === user.uid ||
+            allowedCloseFriendsOwners.has(story.userId);
 
-            if (!groupedStories[story.userId]) {
-              groupedStories[story.userId] = [];
-            }
-            groupedStories[story.userId].push({
-              id: storyId,
-              ...story,
-            });
+          if (!canViewStory) {
+            continue;
           }
-        });
+
+          let resolvedMediaUrl = story.mediaUrl;
+          if (
+            story.isEncrypted &&
+            story.encryptedMediaUrl &&
+            story.encryptedMediaIv &&
+            story.encryptedMediaKeys
+          ) {
+            const decrypted = await decryptFromRecipientPayload({
+              userId: user.uid,
+              payload: {
+                ciphertext: story.encryptedMediaUrl,
+                iv: story.encryptedMediaIv,
+                wrappedKeys: story.encryptedMediaKeys,
+              },
+            });
+            if (!decrypted) {
+              continue;
+            }
+            resolvedMediaUrl = decrypted;
+          }
+
+          if (!groupedStories[story.userId]) {
+            groupedStories[story.userId] = [];
+          }
+
+          groupedStories[story.userId].push({
+            id: storyId,
+            ...story,
+            mediaUrl: resolvedMediaUrl,
+          });
+        }
 
         // Sort stories by creation time
         Object.keys(groupedStories).forEach((userId) => {
@@ -276,6 +337,21 @@ export function Stories() {
 
       const now = Date.now();
       const expiresAt = now + 24 * 60 * 60 * 1000; // 24 hours from now
+      let encryptedPayload:
+        | Awaited<ReturnType<typeof encryptForRecipients>>
+        | null = null;
+
+      if (storyAudience === "close_friends") {
+        const recipients = await resolveCloseFriendsRecipients();
+        encryptedPayload = await encryptForRecipients({
+          ownerUserId: user.uid,
+          recipientUserIds: recipients,
+          plaintext: mediaUrl,
+        });
+        if (!encryptedPayload) {
+          throw new Error("Failed to encrypt close friends story");
+        }
+      }
 
       await set(newStoryRef, {
         userId: user.uid,
@@ -283,9 +359,13 @@ export function Stories() {
         userAvatar:
           user.photoURL ||
           `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-        mediaUrl,
+        mediaUrl: storyAudience === "close_friends" ? "" : mediaUrl,
         mediaType: "image",
         audience: storyAudience,
+        encryptedMediaUrl: encryptedPayload?.ciphertext || null,
+        encryptedMediaIv: encryptedPayload?.iv || null,
+        encryptedMediaKeys: encryptedPayload?.wrappedKeys || null,
+        isEncrypted: Boolean(encryptedPayload),
         mentions: metadata?.mentions || [],
         createdAt: now,
         expiresAt,
@@ -363,6 +443,21 @@ export function Stories() {
 
         const now = Date.now();
         const expiresAt = now + 24 * 60 * 60 * 1000;
+        let encryptedPayload:
+          | Awaited<ReturnType<typeof encryptForRecipients>>
+          | null = null;
+
+        if (storyAudience === "close_friends") {
+          const recipients = await resolveCloseFriendsRecipients();
+          encryptedPayload = await encryptForRecipients({
+            ownerUserId: user.uid,
+            recipientUserIds: recipients,
+            plaintext: mediaUrl,
+          });
+          if (!encryptedPayload) {
+            throw new Error("Failed to encrypt close friends story");
+          }
+        }
 
         await set(newStoryRef, {
           userId: user.uid,
@@ -370,9 +465,13 @@ export function Stories() {
           userAvatar:
             user.photoURL ||
             `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-          mediaUrl,
+          mediaUrl: storyAudience === "close_friends" ? "" : mediaUrl,
           mediaType: "video",
           audience: storyAudience,
+          encryptedMediaUrl: encryptedPayload?.ciphertext || null,
+          encryptedMediaIv: encryptedPayload?.iv || null,
+          encryptedMediaKeys: encryptedPayload?.wrappedKeys || null,
+          isEncrypted: Boolean(encryptedPayload),
           mentions: [],
           createdAt: now,
           expiresAt,

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getDatabase, ref, get, set, push, remove } from "firebase/database";
+import { getDatabase, ref, get, set, push } from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
 import { getSafeAvatarUrl } from "@/utils/media";
 import { getBlockMapsForUser, getBlockStatus } from "@/utils/blocking";
@@ -74,6 +74,8 @@ export default function Home() {
         }
         setFollowingUsers(followingSet);
 
+        const blockMaps = await getBlockMapsForUser(user.uid);
+
         // Fetch users
         const usersRef = ref(db, "users");
         const snapshot = await get(usersRef);
@@ -82,7 +84,12 @@ export default function Home() {
           const usersData = snapshot.val() as Record<string, UserRecord>;
 
           const usersArray: SuggestedUser[] = Object.entries(usersData)
-            .filter(([uid]) => uid !== user.uid && !followingSet.has(uid)) // Exclude current user and already following
+            .filter(([uid]) => {
+              if (uid === user.uid) return false;
+              if (followingSet.has(uid)) return false;
+              if (blockMaps.blockedEither.has(uid)) return false;
+              return true;
+            })
             .map(([uid, data]) => ({
               uid,
               username: data.username || data.email?.split("@")[0] || "user",
@@ -122,6 +129,8 @@ export default function Home() {
           const followingData = followingSnapshot.val();
           followingIds.push(...Object.keys(followingData));
         }
+
+        const blockMaps = await getBlockMapsForUser(user.uid);
 
         // Get all users to check privacy settings
         const usersRef = ref(db, "users");
@@ -171,6 +180,7 @@ export default function Home() {
           const postUserId = post.userId;
           const userData = usersData[postUserId];
           const isPrivate = userData?.accountPrivacy === "private";
+          if (blockMaps.blockedEither.has(postUserId)) return false;
 
           const canSeePost =
             postUserId === user.uid ||
@@ -250,6 +260,17 @@ export default function Home() {
       const db = getDatabase();
       const currentUsername =
         user.displayName || user.email?.split("@")[0] || "user";
+      const blockStatus = await getBlockStatus(user.uid, targetUser.uid);
+      if (blockStatus.blockedEither) {
+        toast({
+          title: "Action blocked",
+          description: blockStatus.blockedByMe
+            ? "Unblock this user first to follow."
+            : "You cannot follow this user.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       // Check if already following
       const followingRef = ref(db, `following/${user.uid}/${targetUser.uid}`);
