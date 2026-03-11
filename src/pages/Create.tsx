@@ -258,9 +258,13 @@ export default function Create() {
       }
     } catch (error: unknown) {
       console.error("Error posting:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to post. Please try again.";
       toast({
         title: "Error",
-        description: "Failed to post. Please try again.",
+        description: message,
         variant: "destructive",
       });
     } finally {

@@ -114,10 +114,13 @@ src/
 
    Required variables:
    ```env
-   # Storage API Configuration
-   VITE_STORAGE_API_BASE_URL=https://storageapis.skyflare.sh/v2
-   VITE_STORAGE_API_TOKEN=your_storage_api_token
-   VITE_STORAGE_BUCKET_ID=your_bucket_id
+   # Storage API Configuration (server-side only)
+   STORAGE_API_BASE_URL=https://storageapis.skyflare.sh/v2
+   STORAGE_API_TOKEN=your_storage_api_token
+   STORAGE_BUCKET_ID=your_bucket_id
+
+   # Optional: override client storage proxy base (defaults to /api/storage)
+   VITE_STORAGE_PROXY_BASE_URL=/api/storage
 
    # Optional: Google Gemini API (for @cognix AI assistant)
    VITE_GEMINI_API_KEY=your_gemini_api_key
@@ -132,6 +135,8 @@ src/
    # or
    bun dev
    ```
+
+   The dev server includes the storage proxy, so you only need this one command.
 
 5. **Open your browser**
    
@@ -219,6 +224,3 @@ This project is open source and available under the [MIT License](LICENSE).
 ---
 
 Made with ❤️ by the Velle Baazi team
-
-
-

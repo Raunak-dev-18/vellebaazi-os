@@ -1,66 +1,122 @@
-const STORAGE_BASE_URL =
-  import.meta.env.VITE_STORAGE_API_BASE_URL ||
-  "https://storageapis.skyflare.sh/v2";
-const STORAGE_TOKEN = import.meta.env.VITE_STORAGE_API_TOKEN;
-const STORAGE_BUCKET_ID =
-  import.meta.env.VITE_STORAGE_BUCKET_ID || import.meta.env.VITE_BUCKET_ID;
+const DEFAULT_STORAGE_PROXY_BASE_URL = "/api/storage";
+const STORAGE_PROXY_BASE_URL = (
+  import.meta.env.VITE_STORAGE_PROXY_BASE_URL || DEFAULT_STORAGE_PROXY_BASE_URL
+).replace(/\/+$/, "");
 
-const assertConfigured = () => {
-  if (!STORAGE_TOKEN || !STORAGE_BUCKET_ID) {
-    throw new Error(
-      "Storage is not configured. Please set VITE_STORAGE_API_TOKEN and VITE_STORAGE_BUCKET_ID.",
-    );
+type StorageUploadResponse = {
+  file_link?: string;
+  fileLink?: string;
+  message?: string;
+  error?: string;
+  data?: {
+    file_link?: string;
+    fileLink?: string;
+  };
+};
+
+const getStorageServiceHint = (status: number) => {
+  if (
+    status === 404 &&
+    STORAGE_PROXY_BASE_URL.startsWith("/") &&
+    STORAGE_PROXY_BASE_URL === DEFAULT_STORAGE_PROXY_BASE_URL
+  ) {
+    return "Storage proxy route not found. Start the app with `npm run dev` or set `VITE_STORAGE_PROXY_BASE_URL` to your backend.";
+  }
+
+  if (status === 500) {
+    return "Check storage server env vars: `STORAGE_API_TOKEN` and `STORAGE_BUCKET_ID`.";
+  }
+
+  return "";
+};
+
+const parseResponseMessage = async (response: Response) => {
+  const text = await response.text().catch(() => "");
+  if (!text) return "";
+
+  try {
+    const parsed = JSON.parse(text) as { error?: string; message?: string };
+    return parsed.error || parsed.message || text;
+  } catch {
+    return text;
   }
 };
 
+const getFileLinkFromUploadResponse = (data: StorageUploadResponse) =>
+  data.file_link ||
+  data.fileLink ||
+  data.data?.file_link ||
+  data.data?.fileLink ||
+  "";
+
 const uploadFile = async (file: File, fileName: string) => {
-  assertConfigured();
+  if (!file) {
+    throw new Error("No file provided.");
+  }
 
   const formData = new FormData();
-  formData.append("folder_name", STORAGE_BUCKET_ID as string);
-  const renamedFile = new File([file], fileName, { type: file.type });
-  formData.append("file", renamedFile);
-
-  const response = await fetch(`${STORAGE_BASE_URL}/upload-content`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${STORAGE_TOKEN}`,
-    },
-    body: formData,
+  const renamedFile = new File([file], fileName || file.name, {
+    type: file.type,
   });
+  formData.append("file", renamedFile);
+  if (fileName) {
+    formData.append("fileName", fileName);
+  }
 
-  if (!response.ok) {
-    const message = await response.text().catch(() => "");
+  let response: Response;
+  try {
+    response = await fetch(`${STORAGE_PROXY_BASE_URL}/upload`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
     throw new Error(
-      `Upload failed (${response.status}). ${message || "Please try again."}`,
+      "Could not connect to storage service. Check your internet and storage proxy configuration.",
     );
   }
 
-  const data = await response.json();
-  return data.file_link as string;
+  if (!response.ok) {
+    const message = await parseResponseMessage(response);
+    const hint = getStorageServiceHint(response.status);
+    throw new Error(
+      `Upload failed (${response.status}). ${message || "Please try again."}${hint ? ` ${hint}` : ""}`,
+    );
+  }
+
+  const data = (await response.json()) as StorageUploadResponse;
+  const fileLink = getFileLinkFromUploadResponse(data);
+  if (!fileLink) {
+    throw new Error(
+      "Upload failed because no file URL was returned by storage service.",
+    );
+  }
+
+  return fileLink;
 };
 
 const deleteFile = async (fileLink: string) => {
-  assertConfigured();
-
   if (!fileLink) return;
 
-  const response = await fetch(`${STORAGE_BASE_URL}/delete-content`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${STORAGE_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      folder_name: STORAGE_BUCKET_ID,
-      file_link: fileLink,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${STORAGE_PROXY_BASE_URL}/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_link: fileLink,
+      }),
+    });
+  } catch {
+    throw new Error(
+      "Could not connect to storage service. Check your internet and storage proxy configuration.",
+    );
+  }
 
   if (!response.ok) {
-    const message = await response.text().catch(() => "");
+    const message = await parseResponseMessage(response);
+    const hint = getStorageServiceHint(response.status);
     throw new Error(
-      `Delete failed (${response.status}). ${message || "Please try again."}`,
+      `Delete failed (${response.status}). ${message || "Please try again."}${hint ? ` ${hint}` : ""}`,
     );
   }
 };
