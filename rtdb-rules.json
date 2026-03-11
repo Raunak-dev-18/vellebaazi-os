@@ -221,6 +221,14 @@
           "fileName": { ".validate": "newData.isString() || newData.val() == null" },
           "fileType": { ".validate": "newData.isString() || newData.val() == null" },
           "sharedPost": { ".validate": true },
+          "replyTo": { ".validate": true },
+          "forwardedFrom": { ".validate": true },
+          "reactions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('userChats/' + auth.uid + '/' + $chatId).exists()",
+              ".validate": "newData.val() == null || (newData.hasChildren(['emoji']) && newData.child('emoji').isString() && newData.child('emoji').val().length > 0 && newData.child('emoji').val().length <= 16 && (!newData.child('username').exists() || newData.child('username').isString()) && (!newData.child('reactedAt').exists() || newData.child('reactedAt').isString() || newData.child('reactedAt').isNumber()))"
+            }
+          },
           "$other": { ".validate": true }
         }
       }
@@ -325,6 +333,14 @@
           "fileName": { ".validate": "newData.isString() || newData.val() == null" },
           "fileType": { ".validate": "newData.isString() || newData.val() == null" },
           "sharedPost": { ".validate": true },
+          "replyTo": { ".validate": true },
+          "forwardedFrom": { ".validate": true },
+          "reactions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('groupMembers/' + $groupId + '/' + auth.uid).exists()",
+              ".validate": "newData.val() == null || (newData.hasChildren(['emoji']) && newData.child('emoji').isString() && newData.child('emoji').val().length > 0 && newData.child('emoji').val().length <= 16 && (!newData.child('username').exists() || newData.child('username').isString()) && (!newData.child('reactedAt').exists() || newData.child('reactedAt').isString() || newData.child('reactedAt').isNumber()))"
+            }
+          },
           "$other": { ".validate": true }
         }
       }

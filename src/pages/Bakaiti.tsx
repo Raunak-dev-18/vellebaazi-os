@@ -1,13 +1,17 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  CornerUpLeft,
   Crown,
+  Forward,
   Loader2,
+  MoreHorizontal,
   Paperclip,
   Plus,
   Search,
   Send,
   Smile,
+  SmilePlus,
   UserMinus,
   UserPlus,
   Users,
@@ -35,6 +39,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
 import { MentionText } from "@/components/MentionText";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -84,6 +94,33 @@ interface ChatMessage {
   fileUrl?: string;
   fileName?: string;
   fileType?: string;
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    text?: string;
+    fileName?: string;
+    fileType?: string;
+    sharedPost?: {
+      caption: string;
+      mediaType: "image" | "video";
+    };
+  };
+  forwardedFrom?: {
+    senderId: string;
+    senderName: string;
+    timestamp: string;
+    conversationId: string;
+    conversationType: ConvType;
+  };
+  reactions?: Record<
+    string,
+    {
+      emoji: string;
+      username?: string;
+      reactedAt?: string;
+    }
+  >;
 }
 
 interface UserOption {
@@ -102,6 +139,39 @@ interface GroupMemberEntry {
 
 type FollowState = "self" | "none" | "following" | "requested";
 
+const QUICK_REACTIONS = [
+  "👍",
+  "❤️",
+  "😂",
+  "😮",
+  "😢",
+  "😡",
+  "🔥",
+  "👏",
+  "🙏",
+  "🎉",
+  "😍",
+  "🤔",
+  "🥳",
+  "🤣",
+  "😎",
+  "🤝",
+  "💯",
+  "✨",
+  "👀",
+  "🙌",
+  "🤍",
+  "🫶",
+  "😴",
+  "💀",
+  "🤯",
+  "🫡",
+  "🤗",
+  "🤩",
+  "🥶",
+  "😤",
+];
+
 const timeAgo = (value: string) => {
   if (!value) return "";
   const d = new Date(value);
@@ -111,6 +181,60 @@ const timeAgo = (value: string) => {
   if (diff < 60) return `${diff}m`;
   if (diff < 1440) return `${Math.floor(diff / 60)}h`;
   return `${Math.floor(diff / 1440)}d`;
+};
+
+const extractFirstSymbol = (value: string) => {
+  const input = value.trim();
+  if (!input) return "";
+
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    const iterator = segmenter.segment(input)[Symbol.iterator]();
+    const first = iterator.next();
+    if (!first.done && typeof first.value?.segment === "string") {
+      return first.value.segment;
+    }
+  }
+
+  return Array.from(input)[0] || "";
+};
+
+const getMessagePreviewText = (message: ChatMessage) => {
+  if (message.text) return message.text;
+  if (message.sharedPost) {
+    return message.sharedPost.caption
+      ? `Post: ${message.sharedPost.caption}`
+      : "Shared post";
+  }
+  if (message.fileType?.startsWith("image/")) {
+    return message.fileName ? `Photo: ${message.fileName}` : "Photo";
+  }
+  if (message.fileName) {
+    return `Attachment: ${message.fileName}`;
+  }
+  return "Message";
+};
+
+const groupReactions = (
+  reactions: ChatMessage["reactions"],
+  currentUserId?: string,
+) => {
+  if (!reactions) return [] as Array<{ emoji: string; count: number; mine: boolean }>;
+  const grouped = new Map<string, { count: number; mine: boolean }>();
+  Object.entries(reactions).forEach(([uid, entry]) => {
+    const emoji = entry?.emoji;
+    if (!emoji) return;
+    const existing = grouped.get(emoji) || { count: 0, mine: false };
+    existing.count += 1;
+    if (uid === currentUserId) existing.mine = true;
+    grouped.set(emoji, existing);
+  });
+
+  return Array.from(grouped.entries()).map(([emoji, value]) => ({
+    emoji,
+    count: value.count,
+    mine: value.mine,
+  }));
 };
 
 export default function Bakaiti() {
@@ -134,6 +258,12 @@ export default function Bakaiti() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedGif, setSelectedGif] = useState<GifPick | null>(null);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
+  const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
+  const [reactionInput, setReactionInput] = useState("");
+  const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
+  const [forwardSearch, setForwardSearch] = useState("");
+  const [forwardingConversationKey, setForwardingConversationKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -200,6 +330,24 @@ export default function Bakaiti() {
       );
   }, [conversations, search]);
 
+  const reactionTargetMessage = useMemo(
+    () => messages.find((entry) => entry.id === reactionTargetId) || null,
+    [messages, reactionTargetId],
+  );
+
+  const filteredForwardConversations = useMemo(() => {
+    if (!forwardTarget) return [];
+    const q = forwardSearch.toLowerCase().trim();
+    return conversations.filter((conversation) => {
+      if (selectedConversation && conversation.key === selectedConversation.key) return false;
+      if (!q) return true;
+      return (
+        conversation.title.toLowerCase().includes(q) ||
+        conversation.lastMessage.toLowerCase().includes(q)
+      );
+    });
+  }, [conversations, forwardSearch, forwardTarget, selectedConversation]);
+
   useEffect(() => {
     if (!selectedConversation || selectedConversation.type !== "dm") return;
     if (!selectedConversation.otherUserId) return;
@@ -214,6 +362,10 @@ export default function Bakaiti() {
   useEffect(() => {
     setShowGifPicker(false);
     setSelectedGif(null);
+    setReplyTarget(null);
+    setReactionTargetId(null);
+    setForwardTarget(null);
+    setForwardSearch("");
     setE2eeRuntimeDisabled(false);
   }, [selectedKey]);
 
@@ -408,6 +560,9 @@ export default function Bakaiti() {
           fileUrl: v.fileUrl as string | undefined,
           fileName: v.fileName as string | undefined,
           fileType: v.fileType as string | undefined,
+          replyTo: v.replyTo as ChatMessage["replyTo"],
+          forwardedFrom: v.forwardedFrom as ChatMessage["forwardedFrom"],
+          reactions: v.reactions as ChatMessage["reactions"],
         }))
         .sort(
           (a, b) =>
@@ -905,6 +1060,209 @@ export default function Bakaiti() {
     }
   };
 
+  const ensureDmChatMappings = useCallback(
+    async (conversation: Conversation) => {
+      if (!user || conversation.type !== "dm" || !conversation.otherUserId) return;
+      const chatId = conversation.id;
+      const now = new Date().toISOString();
+      const selfChatRef = ref(db, `userChats/${user.uid}/${chatId}`);
+      const peerChatRef = ref(db, `userChats/${conversation.otherUserId}/${chatId}`);
+
+      const selfChat = await get(selfChatRef).catch(() => null);
+      if (!selfChat?.exists()) {
+        await set(selfChatRef, {
+          otherUserId: conversation.otherUserId,
+          otherUsername: conversation.title,
+          otherUserAvatar: conversation.avatar,
+          lastMessage: "",
+          lastMessageTime: now,
+        });
+      }
+
+      const peerChat = await get(peerChatRef).catch(() => null);
+      if (!peerChat?.exists()) {
+        await set(peerChatRef, {
+          otherUserId: user.uid,
+          otherUsername: username,
+          otherUserAvatar: selfAvatar,
+          lastMessage: "",
+          lastMessageTime: now,
+        }).catch(() => undefined);
+      }
+    },
+    [db, selfAvatar, user, username],
+  );
+
+  const updateConversationPreview = useCallback(
+    async (conversation: Conversation, preview: string, now: string) => {
+      if (!user) return;
+
+      if (conversation.type === "dm" && conversation.otherUserId) {
+        const selfPayload = {
+          otherUserId: conversation.otherUserId,
+          otherUsername: conversation.title,
+          otherUserAvatar: conversation.avatar,
+          lastMessage: preview,
+          lastMessageTime: now,
+        };
+        const peerPayload = {
+          otherUserId: user.uid,
+          otherUsername: username,
+          otherUserAvatar: selfAvatar,
+          lastMessage: preview,
+          lastMessageTime: now,
+        };
+
+        await set(ref(db, `userChats/${user.uid}/${conversation.id}`), selfPayload);
+        await set(
+          ref(db, `userChats/${conversation.otherUserId}/${conversation.id}`),
+          peerPayload,
+        ).catch((error) => {
+          console.error("Peer chat metadata update failed:", error);
+        });
+        return;
+      }
+
+      if (conversation.type === "group") {
+        await update(ref(db, `groups/${conversation.id}`), { updatedAt: now });
+        const members = await get(ref(db, `groupMembers/${conversation.id}`));
+        if (!members.exists()) return;
+
+        const memberMap = members.val() as Record<string, Record<string, unknown>>;
+        await Promise.all(
+          Object.entries(memberMap).map(([uid, info]) =>
+            update(ref(db, `userGroups/${uid}/${conversation.id}`), {
+              name: conversation.title,
+              role: (info.role as Role) || "member",
+              updatedAt: now,
+              lastMessage: preview,
+            }),
+          ),
+        );
+      }
+    },
+    [db, selfAvatar, user, username],
+  );
+
+  const handleReactToMessage = async (message: ChatMessage, rawEmoji: string) => {
+    if (!user || !selectedConversation) return;
+    const emoji = extractFirstSymbol(rawEmoji);
+    if (!emoji) {
+      toast({
+        title: "Invalid reaction",
+        description: "Please choose a valid emoji.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const basePath =
+      selectedConversation.type === "group"
+        ? `groupMessages/${selectedConversation.id}/${message.id}`
+        : `messages/${selectedConversation.id}/${message.id}`;
+
+    const myReaction = message.reactions?.[user.uid]?.emoji;
+    try {
+      if (myReaction === emoji) {
+        await remove(ref(db, `${basePath}/reactions/${user.uid}`));
+      } else {
+        await set(ref(db, `${basePath}/reactions/${user.uid}`), {
+          emoji,
+          username,
+          reactedAt: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      console.error("Failed to react to message:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update reaction.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleForwardMessage = async (targetConversation: Conversation) => {
+    if (!user || !forwardTarget) return;
+    if (forwardingConversationKey) return;
+
+    setForwardingConversationKey(targetConversation.key);
+    try {
+      if (targetConversation.type === "dm" && targetConversation.otherUserId) {
+        const status = await getBlockStatus(user.uid, targetConversation.otherUserId);
+        if (status.blockedEither) {
+          toast({
+            title: "Action blocked",
+            description: status.blockedByMe
+              ? "Unblock this user first."
+              : "You cannot forward to this chat.",
+            variant: "destructive",
+          });
+          return;
+        }
+        await ensureDmChatMappings(targetConversation);
+      }
+
+      const now = new Date().toISOString();
+      const forwardText = forwardTarget.text || "";
+      const payload: Record<string, unknown> = {
+        senderId: user.uid,
+        senderName: username,
+        text: forwardText,
+        timestamp: now,
+        forwardedFrom: {
+          senderId: forwardTarget.senderId,
+          senderName: forwardTarget.senderName,
+          timestamp: forwardTarget.timestamp,
+          conversationId: selectedConversation?.id || "",
+          conversationType: selectedConversation?.type || "dm",
+        },
+        ...(forwardTarget.fileUrl ? { fileUrl: forwardTarget.fileUrl } : {}),
+        ...(forwardTarget.fileName ? { fileName: forwardTarget.fileName } : {}),
+        ...(forwardTarget.fileType ? { fileType: forwardTarget.fileType } : {}),
+        ...(forwardTarget.sharedPost ? { sharedPost: forwardTarget.sharedPost } : {}),
+      };
+
+      if (forwardTarget.replyTo) {
+        payload.replyTo = forwardTarget.replyTo;
+      }
+
+      const path =
+        targetConversation.type === "group"
+          ? `groupMessages/${targetConversation.id}`
+          : `messages/${targetConversation.id}`;
+
+      await set(push(ref(db, path)), payload);
+
+      const preview =
+        forwardTarget.text.trim() ||
+        (forwardTarget.sharedPost
+          ? "Forwarded post"
+          : forwardTarget.fileType?.startsWith("image/")
+            ? "Forwarded photo"
+            : forwardTarget.fileName
+              ? `Forwarded: ${forwardTarget.fileName}`
+              : "Forwarded message");
+      await updateConversationPreview(targetConversation, preview, now);
+
+      toast({
+        title: "Forwarded",
+        description: `Message forwarded to ${targetConversation.title}.`,
+      });
+      setForwardTarget(null);
+      setForwardSearch("");
+    } catch (error) {
+      console.error("Failed to forward message:", error);
+      toast({
+        title: "Error",
+        description: "Failed to forward message.",
+        variant: "destructive",
+      });
+    } finally {
+      setForwardingConversationKey(null);
+    }
+  };
+
   const sendMessage = async () => {
     if (!user || !selectedConversation) return;
     const text = messageText.trim();
@@ -970,34 +1328,7 @@ export default function Bakaiti() {
       }
 
       if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
-        const chatId = selectedConversation.id;
-        const selfChatRef = ref(db, `userChats/${user.uid}/${chatId}`);
-        const peerChatRef = ref(
-          db,
-          `userChats/${selectedConversation.otherUserId}/${chatId}`,
-        );
-
-        const selfChat = await get(selfChatRef).catch(() => null);
-        if (!selfChat?.exists()) {
-          await set(selfChatRef, {
-            otherUserId: selectedConversation.otherUserId,
-            otherUsername: selectedConversation.title,
-            otherUserAvatar: selectedConversation.avatar,
-            lastMessage: "",
-            lastMessageTime: new Date().toISOString(),
-          });
-        }
-
-        const peerChat = await get(peerChatRef).catch(() => null);
-        if (!peerChat?.exists()) {
-          await set(peerChatRef, {
-            otherUserId: user.uid,
-            otherUsername: username,
-            otherUserAvatar: selfAvatar,
-            lastMessage: "",
-            lastMessageTime: new Date().toISOString(),
-          }).catch(() => undefined);
-        }
+        await ensureDmChatMappings(selectedConversation);
       }
 
       const now = new Date().toISOString();
@@ -1065,6 +1396,26 @@ export default function Bakaiti() {
         ...(fileUrl ? { fileUrl } : {}),
         ...(fileName ? { fileName } : {}),
         ...(fileType ? { fileType } : {}),
+        ...(replyTarget
+          ? {
+              replyTo: {
+                messageId: replyTarget.id,
+                senderId: replyTarget.senderId,
+                senderName: replyTarget.senderName,
+                text: replyTarget.text || "",
+                ...(replyTarget.fileName ? { fileName: replyTarget.fileName } : {}),
+                ...(replyTarget.fileType ? { fileType: replyTarget.fileType } : {}),
+                ...(replyTarget.sharedPost
+                  ? {
+                      sharedPost: {
+                        caption: replyTarget.sharedPost.caption || "",
+                        mediaType: replyTarget.sharedPost.mediaType,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       };
 
       const path =
@@ -1149,6 +1500,7 @@ export default function Bakaiti() {
       setMessageText("");
       setSelectedFile(null);
       setSelectedGif(null);
+      setReplyTarget(null);
       setShowGifPicker(false);
     } catch (error) {
       console.error(error);
@@ -1364,68 +1716,198 @@ export default function Bakaiti() {
 
             <ScrollArea className="flex-1 p-4">
               <div className="space-y-3">
-                {messages.map((m) =>
-                  m.senderId === "system" ? (
-                    <p key={m.id} className="text-center text-xs text-muted-foreground">{m.text}</p>
-                  ) : (
-                    <div key={m.id} className={cn("flex", m.senderId === user?.uid ? "justify-end" : "justify-start")}>
-                      <div className={cn("max-w-[80%] rounded-2xl px-3 py-2", m.senderId === user?.uid ? "bg-primary text-primary-foreground" : "bg-secondary")}>
-                        {m.fileUrl && m.fileType?.startsWith("image/") && (
-                          <img src={m.fileUrl} alt={m.fileName || "Image"} className="mb-2 max-h-64 rounded-lg object-cover" onClick={() => setFullImage(m.fileUrl || null)} />
-                        )}
-                        {m.fileUrl && m.fileType && !m.fileType.startsWith("image/") && (
-                          <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mb-1 block text-xs underline">{m.fileName || "Attachment"}</a>
-                        )}
-                        {m.sharedPost && (
-                          <div className="mb-2 overflow-hidden rounded-xl border border-border/60 bg-background/80">
-                            <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
-                              <Avatar className="h-5 w-5">
-                                <AvatarImage src={m.sharedPost.authorAvatar} alt={m.sharedPost.authorUsername} />
-                                <AvatarFallback>
-                                  {m.sharedPost.authorUsername.slice(0, 1).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
-                              <p className="truncate text-[11px] font-semibold text-foreground">
-                                {m.sharedPost.authorUsername}
+                {messages.map((m) => {
+                  if (m.senderId === "system") {
+                    return (
+                      <p key={m.id} className="text-center text-xs text-muted-foreground">
+                        {m.text}
+                      </p>
+                    );
+                  }
+
+                  const isMine = m.senderId === user?.uid;
+                  const grouped = groupReactions(m.reactions, user?.uid);
+                  const replySnippet =
+                    m.replyTo?.text?.trim() ||
+                    (m.replyTo?.sharedPost
+                      ? m.replyTo.sharedPost.caption
+                        ? `Post: ${m.replyTo.sharedPost.caption}`
+                        : "Shared post"
+                      : m.replyTo?.fileType?.startsWith("image/")
+                        ? m.replyTo.fileName
+                          ? `Photo: ${m.replyTo.fileName}`
+                          : "Photo"
+                        : m.replyTo?.fileName
+                          ? `Attachment: ${m.replyTo.fileName}`
+                          : "Message");
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={cn("flex", isMine ? "justify-end" : "justify-start")}
+                    >
+                      <div className="group max-w-[80%]">
+                        <div
+                          className={cn(
+                            "rounded-2xl px-3 py-2",
+                            isMine ? "bg-primary text-primary-foreground" : "bg-secondary",
+                          )}
+                        >
+                          <div className="mb-1 flex items-start justify-between gap-2">
+                            {m.forwardedFrom ? (
+                              <p className="text-[10px] opacity-75">
+                                Forwarded from {m.forwardedFrom.senderName}
                               </p>
-                            </div>
-                            <div className="flex gap-2 p-2">
-                              {m.sharedPost.mediaType === "video" ? (
-                                <video
-                                  src={m.sharedPost.mediaUrl}
-                                  className="h-14 w-14 rounded-md object-cover"
-                                  muted
-                                  playsInline
-                                />
-                              ) : (
-                                <img
-                                  src={m.sharedPost.mediaUrl}
-                                  alt="Shared post"
-                                  className="h-14 w-14 rounded-md object-cover"
-                                  onClick={() => setFullImage(m.sharedPost?.mediaUrl || null)}
-                                />
+                            ) : (
+                              <span />
+                            )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReplyTarget(m);
+                                  }}
+                                >
+                                  <CornerUpLeft className="mr-2 h-4 w-4" />
+                                  Reply
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReactionTargetId(m.id);
+                                    setReactionInput("");
+                                  }}
+                                >
+                                  <SmilePlus className="mr-2 h-4 w-4" />
+                                  React
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setForwardTarget(m);
+                                    setForwardSearch("");
+                                  }}
+                                >
+                                  <Forward className="mr-2 h-4 w-4" />
+                                  Forward
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+
+                          {m.replyTo && (
+                            <div
+                              className={cn(
+                                "mb-2 rounded-lg border px-2 py-1 text-xs",
+                                isMine
+                                  ? "border-primary-foreground/30 bg-primary-foreground/10"
+                                  : "border-border bg-background/60",
                               )}
-                              <div className="min-w-0">
-                                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                  Shared Post
-                                </p>
-                                <p className="truncate text-xs text-foreground">
-                                  {m.sharedPost.caption || "View post"}
+                            >
+                              <p className="font-semibold">{m.replyTo.senderName}</p>
+                              <p className="truncate opacity-80">{replySnippet}</p>
+                            </div>
+                          )}
+
+                          {m.fileUrl && m.fileType?.startsWith("image/") && (
+                            <img
+                              src={m.fileUrl}
+                              alt={m.fileName || "Image"}
+                              className="mb-2 max-h-64 rounded-lg object-cover"
+                              onClick={() => setFullImage(m.fileUrl || null)}
+                            />
+                          )}
+                          {m.fileUrl && m.fileType && !m.fileType.startsWith("image/") && (
+                            <a
+                              href={m.fileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mb-1 block text-xs underline"
+                            >
+                              {m.fileName || "Attachment"}
+                            </a>
+                          )}
+                          {m.sharedPost && (
+                            <div className="mb-2 overflow-hidden rounded-xl border border-border/60 bg-background/80">
+                              <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
+                                <Avatar className="h-5 w-5">
+                                  <AvatarImage
+                                    src={m.sharedPost.authorAvatar}
+                                    alt={m.sharedPost.authorUsername}
+                                  />
+                                  <AvatarFallback>
+                                    {m.sharedPost.authorUsername.slice(0, 1).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <p className="truncate text-[11px] font-semibold text-foreground">
+                                  {m.sharedPost.authorUsername}
                                 </p>
                               </div>
+                              <div className="flex gap-2 p-2">
+                                {m.sharedPost.mediaType === "video" ? (
+                                  <video
+                                    src={m.sharedPost.mediaUrl}
+                                    className="h-14 w-14 rounded-md object-cover"
+                                    muted
+                                    playsInline
+                                  />
+                                ) : (
+                                  <img
+                                    src={m.sharedPost.mediaUrl}
+                                    alt="Shared post"
+                                    className="h-14 w-14 rounded-md object-cover"
+                                    onClick={() => setFullImage(m.sharedPost?.mediaUrl || null)}
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                    Shared Post
+                                  </p>
+                                  <p className="truncate text-xs text-foreground">
+                                    {m.sharedPost.caption || "View post"}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
+                          )}
+                          {m.text && (
+                            <p className="whitespace-pre-wrap text-sm">
+                              <MentionText text={m.text} />
+                            </p>
+                          )}
+                          <p className="mt-1 text-[10px] opacity-70">{timeAgo(m.timestamp)}</p>
+                        </div>
+
+                        {grouped.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1 px-1">
+                            {grouped.map((reaction) => (
+                              <button
+                                key={`${m.id}-${reaction.emoji}`}
+                                type="button"
+                                onClick={() => handleReactToMessage(m, reaction.emoji)}
+                                className={cn(
+                                  "rounded-full border px-2 py-0.5 text-xs",
+                                  reaction.mine
+                                    ? "border-primary bg-primary/10"
+                                    : "border-border bg-background/80",
+                                )}
+                              >
+                                {reaction.emoji} {reaction.count}
+                              </button>
+                            ))}
                           </div>
                         )}
-                        {m.text && (
-                          <p className="whitespace-pre-wrap text-sm">
-                            <MentionText text={m.text} />
-                          </p>
-                        )}
-                        <p className="mt-1 text-[10px] opacity-70">{timeAgo(m.timestamp)}</p>
                       </div>
                     </div>
-                  ),
-                )}
+                  );
+                })}
                 <div ref={endRef} />
               </div>
             </ScrollArea>
@@ -1443,6 +1925,24 @@ export default function Bakaiti() {
                   }
                 }}
               />
+              {replyTarget && (
+                <div className="mb-2 flex items-start justify-between gap-2 rounded-md border border-border bg-secondary/60 px-2 py-1.5 text-xs">
+                  <div className="min-w-0">
+                    <p className="font-semibold">Replying to {replyTarget.senderName}</p>
+                    <p className="truncate text-muted-foreground">
+                      {getMessagePreviewText(replyTarget)}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={() => setReplyTarget(null)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
               {selectedFile && (
                 <div className="mb-2 flex items-center justify-between rounded-md bg-secondary px-2 py-1 text-xs">
                   <span className="truncate">{selectedFile.name}</span>
@@ -1537,6 +2037,143 @@ export default function Bakaiti() {
           <img src={fullImage} alt="Preview" className="max-h-full max-w-full object-contain" />
         </div>
       )}
+
+      <Dialog
+        open={Boolean(reactionTargetMessage)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReactionTargetId(null);
+            setReactionInput("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>React to message</DialogTitle>
+            <DialogDescription>
+              Choose a quick emoji or type any emoji to react.
+            </DialogDescription>
+          </DialogHeader>
+
+          {reactionTargetMessage && (
+            <div className="rounded-md border border-border bg-secondary/60 px-3 py-2 text-xs">
+              <p className="font-semibold">{reactionTargetMessage.senderName}</p>
+              <p className="truncate text-muted-foreground">
+                {getMessagePreviewText(reactionTargetMessage)}
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {QUICK_REACTIONS.map((emoji) => (
+              <Button
+                key={emoji}
+                type="button"
+                variant="outline"
+                className="h-9 w-9 p-0 text-lg"
+                onClick={() => {
+                  if (!reactionTargetMessage) return;
+                  handleReactToMessage(reactionTargetMessage, emoji).finally(() => {
+                    setReactionTargetId(null);
+                    setReactionInput("");
+                  });
+                }}
+              >
+                {emoji}
+              </Button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Input
+              value={reactionInput}
+              onChange={(e) => setReactionInput(e.target.value)}
+              placeholder="Type or paste any emoji"
+            />
+            <Button
+              type="button"
+              onClick={() => {
+                if (!reactionTargetMessage) return;
+                handleReactToMessage(reactionTargetMessage, reactionInput).finally(() => {
+                  setReactionTargetId(null);
+                  setReactionInput("");
+                });
+              }}
+            >
+              Add
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(forwardTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setForwardTarget(null);
+            setForwardSearch("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Forward message</DialogTitle>
+            <DialogDescription>
+              Pick a chat or group to forward this message.
+            </DialogDescription>
+          </DialogHeader>
+          {forwardTarget && (
+            <div className="rounded-md border border-border bg-secondary/60 px-3 py-2 text-xs">
+              <p className="font-semibold">From {forwardTarget.senderName}</p>
+              <p className="truncate text-muted-foreground">
+                {getMessagePreviewText(forwardTarget)}
+              </p>
+            </div>
+          )}
+          <Input
+            value={forwardSearch}
+            onChange={(e) => setForwardSearch(e.target.value)}
+            placeholder="Search chat or group..."
+          />
+          <ScrollArea className="h-72 rounded-md border border-border p-2">
+            <div className="space-y-1">
+              {filteredForwardConversations.length === 0 ? (
+                <p className="p-2 text-xs text-muted-foreground">
+                  No chats or groups available.
+                </p>
+              ) : (
+                filteredForwardConversations.map((conversation) => (
+                  <button
+                    key={conversation.key}
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-secondary"
+                    onClick={() => {
+                      handleForwardMessage(conversation).catch((error) => {
+                        console.error("Forward action failed:", error);
+                      });
+                    }}
+                    disabled={forwardingConversationKey === conversation.key}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {conversation.title}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {conversation.type === "group" ? "Group chat" : "Direct message"}
+                      </p>
+                    </div>
+                    {forwardingConversationKey === conversation.key ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Forward className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={groupInfoOpen}
