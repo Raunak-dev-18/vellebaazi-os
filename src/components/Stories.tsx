@@ -135,11 +135,16 @@ export function Stories() {
         const closeFriendsOwners = new Set<string>();
         await Promise.all(
           Array.from(ownersToCheck).map(async (ownerId) => {
-            const canViewSnapshot = await get(
-              ref(db, `closeFriends/${ownerId}/${user.uid}`),
-            );
-            if (canViewSnapshot.exists()) {
-              closeFriendsOwners.add(ownerId);
+            try {
+              const canViewSnapshot = await get(
+                ref(db, `closeFriends/${ownerId}/${user.uid}`),
+              );
+              if (canViewSnapshot.exists()) {
+                closeFriendsOwners.add(ownerId);
+              }
+            } catch {
+              // Ignore inaccessible/missing owner close-friends entries so one
+              // failing lookup does not hide all stories.
             }
           }),
         );

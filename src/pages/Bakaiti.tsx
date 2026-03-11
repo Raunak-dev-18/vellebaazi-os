@@ -657,14 +657,18 @@ export default function Bakaiti() {
       const groupRef = push(ref(db, "groups"));
       const groupId = groupRef.key;
       if (!groupId) throw new Error("group id missing");
+      const groupDescriptionValue = groupDescription.trim();
 
-      await set(groupRef, {
-        name,
-        description: groupDescription.trim(),
-        createdBy: user.uid,
-        createdAt: now,
-        updatedAt: now,
-      });
+      // Write group metadata as child paths so creation remains compatible even
+      // if parent-level group write rules are not yet published.
+      await set(ref(db, `groups/${groupId}/createdBy`), user.uid);
+      await set(ref(db, `groups/${groupId}/createdAt`), now);
+      await set(ref(db, `groups/${groupId}/updatedAt`), now);
+      await set(ref(db, `groups/${groupId}/name`), name);
+      await set(
+        ref(db, `groups/${groupId}/description`),
+        groupDescriptionValue || null,
+      );
 
       const userMap = new Map(users.map((u) => [u.uid, u]));
       const members = [user.uid, ...Array.from(selectedMembers)];
@@ -711,12 +715,17 @@ export default function Bakaiti() {
         timestamp: now,
       });
 
-      await ensureConversationKey({
-        scope: "group",
-        conversationId: groupId,
-        participantIds: members,
-        currentUserId: user.uid,
-      });
+      try {
+        await ensureConversationKey({
+          scope: "group",
+          conversationId: groupId,
+          participantIds: members,
+          currentUserId: user.uid,
+        });
+      } catch (keyError) {
+        // Do not fail group creation if key setup is delayed by rules/latency.
+        console.error("Group created but E2EE key setup failed:", keyError);
+      }
 
       setCreateOpen(false);
       setGroupName("");
@@ -726,9 +735,10 @@ export default function Bakaiti() {
       setSelectedKey(`group:${groupId}`);
     } catch (error) {
       console.error(error);
+      const message = error instanceof Error ? error.message : "Permission denied";
       toast({
         title: "Error",
-        description: "Failed to create group",
+        description: `Failed to create group (${message})`,
         variant: "destructive",
       });
     } finally {
