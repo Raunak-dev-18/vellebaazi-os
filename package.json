@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "start": "node server/start-preview.mjs",
     "server": "node server/storage-proxy.mjs"
   },
   "dependencies": {

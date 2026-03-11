@@ -576,14 +576,16 @@ export default function Profile() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="mx-auto w-full max-w-4xl overflow-x-hidden">
       {/* Header */}
-      <div className="p-6 border-b border-border">
-        <div className="flex items-center justify-between mb-4">
+      <div className="border-b border-border p-4 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                <h1 className="text-xl font-semibold">{username}</h1>
+                <h1 className="max-w-[65vw] truncate text-lg font-semibold sm:max-w-none sm:text-xl">
+                  {username}
+                </h1>
                 <ChevronDown className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>
@@ -621,8 +623,8 @@ export default function Profile() {
         </div>
 
         {/* Profile Info */}
-        <div className="flex gap-8 mb-6">
-          <Avatar className="h-24 w-24 border-2 border-border">
+        <div className="mb-6 flex items-start gap-4 sm:gap-8">
+          <Avatar className="h-20 w-20 shrink-0 border-2 border-border sm:h-24 sm:w-24">
             <AvatarImage
               src={
                 user?.photoURL ||
@@ -633,39 +635,47 @@ export default function Profile() {
             <AvatarFallback>{userInitials}</AvatarFallback>
           </Avatar>
 
-          <div className="flex-1">
-            <div className="flex gap-8 mb-4">
+          <div className="min-w-0 flex-1">
+            <div className="mb-4 grid grid-cols-3 gap-2 sm:flex sm:gap-8">
               <div className="text-center">
-                <p className="font-semibold text-lg">{postsCount}</p>
-                <p className="text-sm text-muted-foreground">posts</p>
+                <p className="text-base font-semibold sm:text-lg">{postsCount}</p>
+                <p className="text-xs text-muted-foreground sm:text-sm">posts</p>
               </div>
               <div
                 className="text-center cursor-pointer hover:text-muted-foreground transition-colors"
                 onClick={fetchFollowersList}
               >
-                <p className="font-semibold text-lg">{followersCount}</p>
-                <p className="text-sm text-muted-foreground">followers</p>
+                <p className="text-base font-semibold sm:text-lg">
+                  {followersCount}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  followers
+                </p>
               </div>
               <div
                 className="text-center cursor-pointer hover:text-muted-foreground transition-colors"
                 onClick={fetchFollowingList}
               >
-                <p className="font-semibold text-lg">{followingCount}</p>
-                <p className="text-sm text-muted-foreground">following</p>
+                <p className="text-base font-semibold sm:text-lg">
+                  {followingCount}
+                </p>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  following
+                </p>
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 variant="secondary"
-                className="flex-1"
+                className="w-full sm:flex-1"
                 onClick={handleEditProfile}
               >
                 Edit Profile
               </Button>
               <Button
                 variant="default"
-                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white"
+                className="w-full bg-blue-500 text-white hover:bg-blue-600 sm:flex-1"
                 onClick={() => setIsCreatePostDialogOpen(true)}
               >
                 <Plus className="h-4 w-4 mr-2" />
@@ -677,8 +687,10 @@ export default function Profile() {
 
         {/* Bio */}
         <div>
-          <p className="font-semibold">{username}</p>
-          {bio && <p className="text-sm mt-1 whitespace-pre-wrap">{bio}</p>}
+          <p className="font-semibold break-words">{username}</p>
+          {bio && (
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm">{bio}</p>
+          )}
         </div>
       </div>
 
@@ -970,7 +982,7 @@ export default function Profile() {
                     Select Posts
                   </Button>
                 ) : (
-                  <div className="flex items-center gap-2 w-full">
+                  <div className="flex w-full flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"

@@ -152,6 +152,16 @@ bun run build
 
 The built files will be in the `dist/` directory.
 
+### Render Deployment (Web Service)
+
+Use production build + preview server (do not use `npm run dev` on Render).
+
+- Build command: `npm ci && npm run build`
+- Start command: `npm run start`
+- Health check path: `/`
+
+This avoids runtime mismatches like `_jsxDEV is not a function` caused by serving dev modules in production.
+
 ## 🔧 Firebase Setup
 
 The app uses Firebase for authentication and real-time data. The Firebase config is already set up in `src/lib/firebase.ts`. If you want to use your own Firebase project:

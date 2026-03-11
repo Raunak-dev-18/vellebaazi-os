@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: vellebaazi-os
+    env: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /

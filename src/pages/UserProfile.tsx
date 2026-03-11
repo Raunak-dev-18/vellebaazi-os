@@ -541,30 +541,35 @@ export default function UserProfile() {
   }
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="min-h-screen overflow-x-hidden pb-20">
       {/* Header */}
-      <div className="border-b border-border p-4 flex items-center gap-4">
+      <div className="flex items-center gap-2 border-b border-border p-3 sm:gap-4 sm:p-4">
         <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="text-xl font-semibold">{userData.username}</h1>
+        <h1 className="min-w-0 truncate text-lg font-semibold sm:text-xl">
+          {userData.username}
+        </h1>
       </div>
 
       {/* Profile Info */}
-      <div className="p-6">
-        <div className="flex items-start gap-8 mb-6">
-          <Avatar className="h-32 w-32">
+      <div className="p-4 sm:p-6">
+        <div className="mb-6 flex items-start gap-4 sm:gap-8">
+          <Avatar className="h-20 w-20 shrink-0 sm:h-32 sm:w-32">
             <AvatarImage src={userData.avatar} alt={userData.username} />
-            <AvatarFallback className="text-4xl">
+            <AvatarFallback className="text-2xl sm:text-4xl">
               {userData.username[0].toUpperCase()}
             </AvatarFallback>
           </Avatar>
 
-          <div className="flex-1">
-            <div className="flex items-center gap-4 mb-6">
-              <h2 className="text-xl font-light">{userData.username}</h2>
+          <div className="min-w-0 flex-1">
+            <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:gap-4">
+              <h2 className="truncate text-lg font-light sm:text-xl">
+                {userData.username}
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
               {user?.uid === userData.uid ? (
-                <Button variant="secondary" disabled className="px-8">
+                <Button variant="secondary" disabled className="px-4 sm:px-8">
                   This is you
                 </Button>
               ) : (
@@ -572,8 +577,8 @@ export default function UserProfile() {
                   <Button
                     className={
                       isFollowing
-                        ? "bg-secondary hover:bg-secondary/80 text-foreground px-8"
-                        : "bg-blue-500 hover:bg-blue-600 text-white px-8"
+                        ? "bg-secondary hover:bg-secondary/80 text-foreground px-4 sm:px-8"
+                        : "bg-blue-500 hover:bg-blue-600 text-white px-4 sm:px-8"
                     }
                     onClick={handleFollowToggle}
                     disabled={followActionLoading || isBlockedByMe || hasBlockedMe}
@@ -620,30 +625,32 @@ export default function UserProfile() {
                 <Settings className="h-5 w-5" />
               </Button>
             </div>
+            </div>
 
-            <div className="flex gap-8 mb-4">
-              <div>
-                <span className="font-semibold">{userData.posts}</span> posts
+            <div className="mb-4 grid grid-cols-3 gap-2 text-center sm:flex sm:gap-8 sm:text-left">
+              <div className="text-center sm:text-left">
+                <span className="font-semibold">{userData.posts}</span>{" "}
+                <span className="text-sm sm:text-base">posts</span>
               </div>
               <div
-                className="cursor-pointer hover:text-muted-foreground transition-colors"
+                className="cursor-pointer text-center transition-colors hover:text-muted-foreground sm:text-left"
                 onClick={fetchFollowersList}
               >
                 <span className="font-semibold">{userData.followers}</span>{" "}
-                followers
+                <span className="text-sm sm:text-base">followers</span>
               </div>
               <div
-                className="cursor-pointer hover:text-muted-foreground transition-colors"
+                className="cursor-pointer text-center transition-colors hover:text-muted-foreground sm:text-left"
                 onClick={fetchFollowingList}
               >
                 <span className="font-semibold">{userData.following}</span>{" "}
-                following
+                <span className="text-sm sm:text-base">following</span>
               </div>
             </div>
 
             <div>
-              <p className="font-semibold">{userData.fullName}</p>
-              <p className="text-sm">{userData.bio}</p>
+              <p className="break-words font-semibold">{userData.fullName}</p>
+              <p className="break-words text-sm">{userData.bio}</p>
             </div>
           </div>
         </div>

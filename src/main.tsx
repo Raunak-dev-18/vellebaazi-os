@@ -51,6 +51,16 @@ const mountApp = () => {
 };
 
 const bootstrap = async () => {
+  if (
+    import.meta.env.DEV &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    console.error(
+      "Deployment appears to be running Vite dev mode on a non-local host. Use `npm run build` and `npm run start` for production.",
+    );
+  }
+
   if (!import.meta.env.PROD) {
     await clearServiceWorkersAndCaches();
   }
