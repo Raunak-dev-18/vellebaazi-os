@@ -211,12 +211,17 @@ export default function Bakaiti() {
         return [user.uid, conversation.otherUserId || ""].filter(Boolean);
       }
 
-      const membersSnapshot = await get(ref(db, `groupMembers/${conversation.id}`));
-      if (!membersSnapshot.exists()) {
+      try {
+        const membersSnapshot = await get(ref(db, `groupMembers/${conversation.id}`));
+        if (!membersSnapshot.exists()) {
+          return [user.uid];
+        }
+        const members = membersSnapshot.val() as Record<string, unknown>;
+        return Object.keys(members);
+      } catch (error) {
+        console.error("Unable to resolve group participants for E2EE:", error);
         return [user.uid];
       }
-      const members = membersSnapshot.val() as Record<string, unknown>;
-      return Object.keys(members);
     },
     [db, user],
   );
@@ -315,24 +320,40 @@ export default function Bakaiti() {
       const data = snap.val() as Record<string, Record<string, unknown>>;
       const groups = await Promise.all(
         Object.entries(data).map(async ([groupId, membership]) => {
-          const g = await get(ref(db, `groups/${groupId}`));
-          if (!g.exists()) return null;
-          const groupData = g.val() as Record<string, unknown>;
-          return {
-            key: `group:${groupId}`,
-            type: "group" as const,
-            id: groupId,
-            title: (groupData.name as string) || "Group",
-            avatar: "",
-            subtitle: "Group chat",
-            role: ((membership.role as Role) || "member") as Role,
-            lastMessage: (membership.lastMessage as string) || "",
-            lastMessageTime:
-              (membership.updatedAt as string) ||
-              (groupData.updatedAt as string) ||
-              (groupData.createdAt as string) ||
-              "",
-          };
+          try {
+            const [g, selfMembership] = await Promise.all([
+              get(ref(db, `groups/${groupId}`)),
+              get(ref(db, `groupMembers/${groupId}/${user.uid}`)),
+            ]);
+            if (!g.exists() || !selfMembership.exists()) {
+              // Auto-clean stale local membership entries so dead groups stop failing sends.
+              await remove(ref(db, `userGroups/${user.uid}/${groupId}`)).catch(() => undefined);
+              return null;
+            }
+            const groupData = g.val() as Record<string, unknown>;
+            const selfMembershipData = selfMembership.val() as Record<string, unknown>;
+            return {
+              key: `group:${groupId}`,
+              type: "group" as const,
+              id: groupId,
+              title: (groupData.name as string) || "Group",
+              avatar: "",
+              subtitle: "Group chat",
+              role: ((selfMembershipData.role as Role) ||
+                (membership.role as Role) ||
+                "member") as Role,
+              lastMessage: (membership.lastMessage as string) || "",
+              lastMessageTime:
+                (membership.updatedAt as string) ||
+                (groupData.updatedAt as string) ||
+                (groupData.createdAt as string) ||
+                "",
+            };
+          } catch {
+            // Auto-clean stale local membership entries so dead groups stop failing sends.
+            await remove(ref(db, `userGroups/${user.uid}/${groupId}`)).catch(() => undefined);
+            return null;
+          }
         }),
       );
       latestGroups = groups.filter((g): g is Conversation => g !== null);
@@ -893,6 +914,39 @@ export default function Bakaiti() {
         return;
       }
 
+      if (selectedConversation.type === "group") {
+        try {
+          const selfMember = await get(
+            ref(db, `groupMembers/${selectedConversation.id}/${user.uid}`),
+          );
+          if (selfMember.exists()) {
+            // Keep going.
+          } else {
+            await remove(ref(db, `userGroups/${user.uid}/${selectedConversation.id}`)).catch(
+              () => undefined,
+            );
+            setSelectedKey(null);
+            toast({
+              title: "Group unavailable",
+              description: "You are no longer a member of this group.",
+              variant: "destructive",
+            });
+            return;
+          }
+        } catch {
+          await remove(ref(db, `userGroups/${user.uid}/${selectedConversation.id}`)).catch(
+            () => undefined,
+          );
+          setSelectedKey(null);
+          toast({
+            title: "Group unavailable",
+            description: "Group membership is invalid. Refreshing your inbox.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       const now = new Date().toISOString();
       let fileUrl = "";
       if (selectedFile) {
@@ -909,18 +963,22 @@ export default function Bakaiti() {
       let encryption: string | undefined;
 
       let activeKey = conversationKey;
-      if (!activeKey && finalText) {
-        const participants = await resolveConversationParticipants(selectedConversation);
-        activeKey = await ensureConversationKey({
-          scope: selectedConversation.type,
-          conversationId: selectedConversation.id,
-          participantIds: participants,
-          currentUserId: user.uid,
-        });
-        setConversationKey(activeKey);
+      if (!activeKey && finalText && e2eeEnabled) {
+        try {
+          const participants = await resolveConversationParticipants(selectedConversation);
+          activeKey = await ensureConversationKey({
+            scope: selectedConversation.type,
+            conversationId: selectedConversation.id,
+            participantIds: participants,
+            currentUserId: user.uid,
+          });
+          setConversationKey(activeKey);
+        } catch (error) {
+          console.error("E2EE setup failed during send; falling back to standard message.", error);
+        }
       }
 
-      if (activeKey && finalText) {
+      if (activeKey && finalText && e2eeEnabled) {
         const encryptedPayload = await encryptTextWithKey(finalText, activeKey);
         encryptedText = encryptedPayload.ciphertext;
         encryptedIv = encryptedPayload.iv;
@@ -1008,9 +1066,10 @@ export default function Bakaiti() {
       setSelectedFile(null);
     } catch (error) {
       console.error(error);
+      const message = error instanceof Error ? error.message : "Permission denied";
       toast({
         title: "Error",
-        description: "Failed to send message",
+        description: `Failed to send message (${message})`,
         variant: "destructive",
       });
     } finally {

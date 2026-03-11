@@ -171,38 +171,46 @@ export function SharePostDialog({
       let encryption: string | undefined;
 
       if (target.type === "dm" && target.otherUserId) {
-        const key = await ensureConversationKey({
-          scope: "dm",
-          conversationId: target.id,
-          participantIds: [user.uid, target.otherUserId],
-          currentUserId: user.uid,
-        });
-        if (key) {
-          const encrypted = await encryptTextWithKey(shareText, key);
-          encryptedText = encrypted.ciphertext;
-          encryptedIv = encrypted.iv;
-          encryption = "e2ee_v1";
-          text = "";
+        try {
+          const key = await ensureConversationKey({
+            scope: "dm",
+            conversationId: target.id,
+            participantIds: [user.uid, target.otherUserId],
+            currentUserId: user.uid,
+          });
+          if (key) {
+            const encrypted = await encryptTextWithKey(shareText, key);
+            encryptedText = encrypted.ciphertext;
+            encryptedIv = encrypted.iv;
+            encryption = "e2ee_v1";
+            text = "";
+          }
+        } catch (error) {
+          console.error("DM E2EE setup failed for share; sending standard payload.", error);
         }
       } else if (target.type === "group") {
-        const membersSnapshot = await get(ref(db, `groupMembers/${target.id}`));
-        const participants = membersSnapshot.exists()
-          ? Object.keys(
-              membersSnapshot.val() as Record<string, Record<string, unknown>>,
-            )
-          : [user.uid];
-        const key = await ensureConversationKey({
-          scope: "group",
-          conversationId: target.id,
-          participantIds: participants,
-          currentUserId: user.uid,
-        });
-        if (key) {
-          const encrypted = await encryptTextWithKey(shareText, key);
-          encryptedText = encrypted.ciphertext;
-          encryptedIv = encrypted.iv;
-          encryption = "e2ee_v1";
-          text = "";
+        try {
+          const membersSnapshot = await get(ref(db, `groupMembers/${target.id}`));
+          const participants = membersSnapshot.exists()
+            ? Object.keys(
+                membersSnapshot.val() as Record<string, Record<string, unknown>>,
+              )
+            : [user.uid];
+          const key = await ensureConversationKey({
+            scope: "group",
+            conversationId: target.id,
+            participantIds: participants,
+            currentUserId: user.uid,
+          });
+          if (key) {
+            const encrypted = await encryptTextWithKey(shareText, key);
+            encryptedText = encrypted.ciphertext;
+            encryptedIv = encrypted.iv;
+            encryption = "e2ee_v1";
+            text = "";
+          }
+        } catch (error) {
+          console.error("Group E2EE setup failed for share; sending standard payload.", error);
         }
       }
 

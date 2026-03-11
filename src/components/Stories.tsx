@@ -135,8 +135,9 @@ export function Stories() {
         Object.values(allStories).forEach((story) => {
           if (
             story.expiresAt > now &&
-            !followingOwners.has(story.userId) &&
-            story.userId !== user.uid
+            story.userId !== user.uid &&
+            (story.audience === "close_friends" ||
+              !followingOwners.has(story.userId))
           ) {
             ownersToCheck.add(story.userId);
           }
