@@ -1,7 +1,7 @@
-const CACHE_NAME = "velle-baazi-v2";
+const CACHE_NAME = "velle-baazi-v3";
+const OFFLINE_FALLBACK = "/offline.html";
 const APP_SHELL = [
-  "/",
-  "/index.html",
+  OFFLINE_FALLBACK,
   "/manifest.webmanifest",
   "/favicon.ico",
   "/logo.png",
@@ -15,45 +15,6 @@ const isDevModulePath = (pathname) =>
   pathname.startsWith("/@vite") ||
   pathname.startsWith("/@id/") ||
   pathname.startsWith("/@fs/");
-
-const networkFirst = async (request, fallbackPath) => {
-  try {
-    const networkResponse = await fetch(request);
-    if (
-      networkResponse &&
-      networkResponse.status === 200 &&
-      networkResponse.type === "basic"
-    ) {
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(request, networkResponse.clone());
-    }
-    return networkResponse;
-  } catch {
-    const cachedResponse = await caches.match(request);
-    if (cachedResponse) return cachedResponse;
-    if (fallbackPath) {
-      const fallback = await caches.match(fallbackPath);
-      if (fallback) return fallback;
-    }
-    throw new Error("Network unavailable");
-  }
-};
-
-const cacheFirst = async (request) => {
-  const cachedResponse = await caches.match(request);
-  if (cachedResponse) return cachedResponse;
-
-  const networkResponse = await fetch(request);
-  if (
-    networkResponse &&
-    networkResponse.status === 200 &&
-    networkResponse.type === "basic"
-  ) {
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, networkResponse.clone());
-  }
-  return networkResponse;
-};
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -96,14 +57,34 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (event.request.mode === "navigate") {
-    event.respondWith(networkFirst(event.request, "/index.html"));
+    event.respondWith(
+      (async () => {
+        try {
+          return await fetch(event.request);
+        } catch {
+          const cache = await caches.open(CACHE_NAME);
+          const offlinePage = await cache.match(OFFLINE_FALLBACK);
+          return offlinePage || Response.error();
+        }
+      })(),
+    );
     return;
   }
 
   if (requestUrl.pathname.startsWith("/assets/")) {
-    event.respondWith(networkFirst(event.request));
+    event.respondWith(fetch(event.request));
     return;
   }
 
-  event.respondWith(cacheFirst(event.request));
+  event.respondWith(
+    (async () => {
+      try {
+        return await fetch(event.request);
+      } catch {
+        const cache = await caches.open(CACHE_NAME);
+        const cachedResponse = await cache.match(event.request);
+        return cachedResponse || Response.error();
+      }
+    })(),
+  );
 });

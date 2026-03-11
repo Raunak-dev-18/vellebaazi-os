@@ -17,7 +17,6 @@ interface SuggestedUser {
   avatar?: string;
   isFollowing?: boolean;
 }
-
 interface UserRecord {
   username?: string;
   email?: string;
@@ -428,7 +427,7 @@ export default function Home() {
     user?.displayName || user?.email?.split("@")[0] || "user";
 
   return (
-    <div className="mx-auto flex w-full max-w-[1200px] justify-center gap-6 px-0 md:px-4 lg:px-6">
+    <div className="mx-auto flex w-full max-w-[1200px] justify-center gap-6 px-0 text-foreground md:px-4 lg:px-6">
       {/* Main Feed */}
       <div className="w-full max-w-[630px] flex-1">
         <Stories />
@@ -436,26 +435,25 @@ export default function Home() {
           {loadingPosts ? (
             <div className="space-y-6">
               {[...Array(3)].map((_, i) => (
-                <div
-                  key={i}
-                  className="border border-border rounded-lg bg-card"
-                >
+                <div key={i} className="rounded-lg border border-border bg-card">
                   <div className="flex items-center gap-3 p-4">
-                    <div className="h-10 w-10 rounded-full bg-muted animate-pulse" />
-                    <div className="h-4 w-24 bg-muted animate-pulse rounded" />
+                    <div className="h-10 w-10 animate-pulse rounded-full bg-muted" />
+                    <div className="h-4 w-24 animate-pulse rounded bg-muted" />
                   </div>
                   <div className="aspect-square bg-muted animate-pulse" />
-                  <div className="p-4 space-y-2">
-                    <div className="h-4 w-20 bg-muted animate-pulse rounded" />
-                    <div className="h-4 w-full bg-muted animate-pulse rounded" />
+                  <div className="space-y-2 p-4">
+                    <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                    <div className="h-4 w-full animate-pulse rounded bg-muted" />
                   </div>
                 </div>
               ))}
             </div>
           ) : posts.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p className="text-lg font-semibold mb-2">No Posts Yet</p>
-              <p className="text-sm">Follow users to see their posts here</p>
+            <div className="py-12 text-center">
+              <p className="mb-2 text-lg font-semibold text-foreground">No Posts Yet</p>
+              <p className="text-sm text-muted-foreground">
+                Follow users to see their posts here
+              </p>
             </div>
           ) : (
             <>
@@ -490,7 +488,7 @@ export default function Home() {
       <div className="hidden w-80 shrink-0 pt-8 xl:block">
         <div className="sticky top-8">
           {/* Current User */}
-          <div className="flex items-center gap-3 mb-6">
+          <div className="mb-6 flex items-center gap-3">
             <Avatar
               className="h-14 w-14 cursor-pointer"
               onClick={() => navigate("/profile")}
@@ -503,9 +501,9 @@ export default function Home() {
                 {currentUsername[0].toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               <p
-                className="text-sm font-semibold cursor-pointer hover:text-muted-foreground transition-colors truncate"
+                className="truncate text-sm font-semibold transition-colors hover:text-muted-foreground"
                 onClick={() => navigate("/profile")}
               >
                 {currentUsername}
@@ -516,7 +514,7 @@ export default function Home() {
             </div>
             <Button
               variant="ghost"
-              className="text-xs font-semibold text-blue-500 hover:text-blue-600 h-auto p-0"
+              className="h-auto p-0 text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
               onClick={() => navigate("/profile")}
             >
               Switch
@@ -525,13 +523,13 @@ export default function Home() {
 
           {/* Suggested Users Section */}
           <div className="mb-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-muted-foreground">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-foreground/75 dark:text-foreground/70">
                 Suggested for you
               </h2>
               <Button
                 variant="ghost"
-                className="text-xs font-semibold h-auto p-0 hover:text-muted-foreground"
+                className="h-auto p-0 text-xs font-semibold text-foreground hover:text-muted-foreground"
               >
                 See All
               </Button>
@@ -567,9 +565,9 @@ export default function Home() {
                         {suggestedUser.username[0].toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p
-                        className="text-sm font-semibold cursor-pointer hover:text-muted-foreground transition-colors truncate"
+                        className="truncate text-sm font-semibold transition-colors hover:text-muted-foreground"
                         onClick={() => handleUserClick(suggestedUser.username)}
                       >
                         {suggestedUser.username}
@@ -580,7 +578,7 @@ export default function Home() {
                     </div>
                     <Button
                       variant="ghost"
-                      className="text-xs font-semibold text-blue-500 hover:text-blue-600 h-auto p-0"
+                      className="h-auto p-0 text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
                       onClick={() => handleFollow(suggestedUser)}
                       disabled={followLoading.has(suggestedUser.uid)}
                     >
@@ -595,40 +593,41 @@ export default function Home() {
           </div>
 
           {/* Footer Links */}
-          <div className="text-xs text-muted-foreground space-y-2 mt-8">
+          <div className="mt-8 space-y-2 text-xs text-muted-foreground">
             <div className="flex flex-wrap gap-2">
-              <a href="#" className="hover:underline">
+              <a href="#" className="hover:text-foreground hover:underline">
                 About
               </a>
-              <span>·</span>
-              <a href="#" className="hover:underline">
+              <span>&middot;</span>
+              <a href="#" className="hover:text-foreground hover:underline">
                 Help
               </a>
-              <span>·</span>
-              <a href="#" className="hover:underline">
+              <span>&middot;</span>
+              <a href="#" className="hover:text-foreground hover:underline">
                 Press
               </a>
-              <span>·</span>
-              <a href="#" className="hover:underline">
+              <span>&middot;</span>
+              <a href="#" className="hover:text-foreground hover:underline">
                 API
               </a>
-              <span>·</span>
-              <a href="#" className="hover:underline">
+              <span>&middot;</span>
+              <a href="#" className="hover:text-foreground hover:underline">
                 Jobs
               </a>
-              <span>·</span>
-              <a href="/privacy" className="hover:underline">
+              <span>&middot;</span>
+              <a href="/privacy" className="hover:text-foreground hover:underline">
                 Privacy
               </a>
-              <span>·</span>
-              <a href="/terms" className="hover:underline">
+              <span>&middot;</span>
+              <a href="/terms" className="hover:text-foreground hover:underline">
                 Terms
               </a>
             </div>
-            <p className="text-xs">© 2025 Vellebaazi</p>
+            <p className="text-xs">&copy; 2025 Vellebaazi</p>
           </div>
         </div>
       </div>
     </div>
   );
 }
+

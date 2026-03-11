@@ -44,7 +44,7 @@ export function AppSidebar() {
       <Sidebar
         className={`${
           isCollapsed ? "w-20" : "w-64"
-        } rounded-2xl border border-border bg-sidebar shadow-sm transition-all duration-300`}
+        } rounded-2xl border border-sidebar-border bg-sidebar shadow-sm transition-all duration-300`}
         collapsible="icon"
       >
         <SidebarContent className="flex h-full flex-col bg-sidebar">
@@ -86,7 +86,7 @@ export function AppSidebar() {
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
-                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
+                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
                           isCollapsed
                             ? "mx-auto w-12 justify-center px-0"
                             : "mx-2 gap-3 px-3"
@@ -120,7 +120,7 @@ export function AppSidebar() {
                       <NavLink
                         to={item.url}
                         end
-                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
+                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
                           isCollapsed
                             ? "mx-auto w-12 justify-center px-0"
                             : "mx-2 gap-3 px-3"
