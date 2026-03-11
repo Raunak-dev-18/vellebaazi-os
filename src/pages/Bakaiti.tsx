@@ -58,6 +58,15 @@ interface ChatMessage {
   encryptedText?: string;
   encryptedIv?: string;
   encryption?: string;
+  sharedPost?: {
+    postId: string;
+    mediaUrl: string;
+    mediaType: "image" | "video";
+    caption: string;
+    authorId: string;
+    authorUsername: string;
+    authorAvatar: string;
+  };
   fileUrl?: string;
   fileName?: string;
   fileType?: string;
@@ -310,6 +319,7 @@ export default function Bakaiti() {
           encryptedText: v.encryptedText as string | undefined,
           encryptedIv: v.encryptedIv as string | undefined,
           encryption: v.encryption as string | undefined,
+          sharedPost: v.sharedPost as ChatMessage["sharedPost"],
           fileUrl: v.fileUrl as string | undefined,
           fileName: v.fileName as string | undefined,
           fileType: v.fileType as string | undefined,
@@ -358,7 +368,7 @@ export default function Bakaiti() {
           }),
         );
 
-        setMessages(decoded.filter((entry) => entry.text || entry.fileUrl));
+        setMessages(decoded.filter((entry) => entry.text || entry.fileUrl || entry.sharedPost));
       };
 
       decode().catch((error) => {
@@ -799,6 +809,46 @@ export default function Bakaiti() {
                         )}
                         {m.fileUrl && m.fileType && !m.fileType.startsWith("image/") && (
                           <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mb-1 block text-xs underline">{m.fileName || "Attachment"}</a>
+                        )}
+                        {m.sharedPost && (
+                          <div className="mb-2 overflow-hidden rounded-xl border border-border/60 bg-background/80">
+                            <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
+                              <Avatar className="h-5 w-5">
+                                <AvatarImage src={m.sharedPost.authorAvatar} alt={m.sharedPost.authorUsername} />
+                                <AvatarFallback>
+                                  {m.sharedPost.authorUsername.slice(0, 1).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <p className="truncate text-[11px] font-semibold text-foreground">
+                                {m.sharedPost.authorUsername}
+                              </p>
+                            </div>
+                            <div className="flex gap-2 p-2">
+                              {m.sharedPost.mediaType === "video" ? (
+                                <video
+                                  src={m.sharedPost.mediaUrl}
+                                  className="h-14 w-14 rounded-md object-cover"
+                                  muted
+                                  playsInline
+                                />
+                              ) : (
+                                <img
+                                  src={m.sharedPost.mediaUrl}
+                                  alt="Shared post"
+                                  className="h-14 w-14 rounded-md object-cover"
+                                  onClick={() => setFullImage(m.sharedPost?.mediaUrl || null)}
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                  Shared Post
+                                </p>
+                                <p className="truncate text-xs text-foreground">
+                                  {m.sharedPost.caption || "View post"}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         )}
                         {m.text && (
                           <p className="whitespace-pre-wrap text-sm">

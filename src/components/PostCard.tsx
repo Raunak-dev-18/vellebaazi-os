@@ -27,6 +27,7 @@ import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { getSafeAvatarUrl } from "@/utils/media";
 import { sendMentionNotifications } from "@/utils/mentionNotifications";
+import { SharePostDialog } from "@/components/chat/SharePostDialog";
 
 interface PostCardProps {
   id: string;
@@ -123,6 +124,7 @@ export function PostCard({
     new Set(),
   );
   const [mediaError, setMediaError] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
 
@@ -643,7 +645,12 @@ export function PostCard({
           >
             <MessageCircle className="h-6 w-6" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setShareOpen(true)}
+          >
             <Send className="h-6 w-6" />
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8 ml-auto">
@@ -948,6 +955,20 @@ export function PostCard({
           </div>
         </div>
       )}
+
+      <SharePostDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        post={{
+          postId: id,
+          mediaUrl: image,
+          mediaType: isVideoUrl(image) ? "video" : "image",
+          caption,
+          authorId: userId,
+          authorUsername: username,
+          authorAvatar: avatar,
+        }}
+      />
     </div>
   );
 }
