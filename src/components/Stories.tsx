@@ -63,6 +63,67 @@ interface StoryRecord {
   expiresAt: number;
 }
 
+const parseStoryTimestamp = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) return asNumber;
+    const asDate = Date.parse(value);
+    if (!Number.isNaN(asDate)) return asDate;
+  }
+  return 0;
+};
+
+const normalizeStoryRecord = (
+  value: unknown,
+  fallbackUserId?: string,
+): StoryRecord | null => {
+  if (!value || typeof value !== "object") return null;
+
+  const raw = value as Record<string, unknown>;
+  const userId =
+    typeof raw.userId === "string" && raw.userId.trim()
+      ? raw.userId
+      : fallbackUserId;
+  if (!userId) return null;
+
+  const expiresAt = parseStoryTimestamp(raw.expiresAt);
+  if (!expiresAt) return null;
+  const createdAt = parseStoryTimestamp(raw.createdAt) || Date.now();
+
+  const mediaType = raw.mediaType === "video" ? "video" : "image";
+  const audience =
+    raw.audience === "close_friends" || raw.audience === "public"
+      ? raw.audience
+      : "public";
+
+  return {
+    userId,
+    username:
+      typeof raw.username === "string" && raw.username.trim()
+        ? raw.username
+        : "user",
+    userAvatar: typeof raw.userAvatar === "string" ? raw.userAvatar : "",
+    mediaUrl: typeof raw.mediaUrl === "string" ? raw.mediaUrl : "",
+    mediaType,
+    encryptedMediaUrl:
+      typeof raw.encryptedMediaUrl === "string" ? raw.encryptedMediaUrl : undefined,
+    encryptedMediaIv:
+      typeof raw.encryptedMediaIv === "string" ? raw.encryptedMediaIv : undefined,
+    encryptedMediaKeys:
+      raw.encryptedMediaKeys && typeof raw.encryptedMediaKeys === "object"
+        ? (raw.encryptedMediaKeys as StoryRecord["encryptedMediaKeys"])
+        : undefined,
+    isEncrypted: Boolean(raw.isEncrypted),
+    audience,
+    mentions: Array.isArray(raw.mentions)
+      ? (raw.mentions.filter((entry): entry is string => typeof entry === "string") as string[])
+      : undefined,
+    createdAt,
+    expiresAt,
+  };
+};
+
 const formatStoryAge = (createdAt: number) => {
   const diffMs = Date.now() - createdAt;
   const minutes = Math.max(1, Math.floor(diffMs / 60000));
@@ -128,7 +189,27 @@ export function Stories() {
       }
 
       if (snapshot.exists()) {
-        const allStories = snapshot.val() as Record<string, StoryRecord>;
+        const rawStories = snapshot.val() as Record<string, unknown>;
+        const allStories: Record<string, StoryRecord> = {};
+
+        Object.entries(rawStories).forEach(([storyId, value]) => {
+          const directRecord = normalizeStoryRecord(value);
+          if (directRecord) {
+            allStories[storyId] = directRecord;
+            return;
+          }
+
+          if (value && typeof value === "object") {
+            Object.entries(value as Record<string, unknown>).forEach(
+              ([nestedStoryId, nestedValue]) => {
+                const nestedRecord = normalizeStoryRecord(nestedValue, storyId);
+                if (!nestedRecord) return;
+                allStories[`${storyId}:${nestedStoryId}`] = nestedRecord;
+              },
+            );
+          }
+        });
+
         const now = Date.now();
         const ownersToCheck = new Set<string>();
 
@@ -187,19 +268,26 @@ export function Stories() {
             story.encryptedMediaIv &&
             story.encryptedMediaKeys
           ) {
-            const decrypted = await decryptFromRecipientPayload({
-              userId: user.uid,
-              payload: {
-                ciphertext: story.encryptedMediaUrl,
-                iv: story.encryptedMediaIv,
-                wrappedKeys: story.encryptedMediaKeys,
-              },
-            });
-            if (!decrypted) {
+            try {
+              const decrypted = await decryptFromRecipientPayload({
+                userId: user.uid,
+                payload: {
+                  ciphertext: story.encryptedMediaUrl,
+                  iv: story.encryptedMediaIv,
+                  wrappedKeys: story.encryptedMediaKeys,
+                },
+              });
+              if (!decrypted) {
+                continue;
+              }
+              resolvedMediaUrl = decrypted;
+            } catch {
+              // Skip only this story if its encrypted payload is stale/corrupt.
               continue;
             }
-            resolvedMediaUrl = decrypted;
           }
+
+          if (!resolvedMediaUrl) continue;
 
           if (!groupedStories[story.userId]) {
             groupedStories[story.userId] = [];
