@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NavLink } from "@/components/NavLink";
+import { cn } from "@/lib/utils";
+import { useNavBadges } from "@/hooks/useNavBadges";
 import {
   Sidebar,
   SidebarContent,
@@ -37,7 +39,14 @@ const footerItems = [{ title: "Settings", url: "/settings", icon: Settings }];
 
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
+  const { unreadBakaiti, unreadNotifications } = useNavBadges();
   const isCollapsed = state === "collapsed";
+
+  const getBadgeCount = (title: string) => {
+    if (title === "Bakaiti") return unreadBakaiti;
+    if (title === "Notifications") return unreadNotifications;
+    return 0;
+  };
 
   return (
     <div className="h-screen p-4">
@@ -80,33 +89,48 @@ export function AppSidebar() {
 
             <SidebarGroupContent>
               <SidebarMenu className="space-y-1">
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild>
-                      <NavLink
-                        to={item.url}
-                        end={item.url === "/"}
-                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
-                          isCollapsed
-                            ? "mx-auto w-12 justify-center px-0"
-                            : "mx-2 gap-3 px-3"
-                        }`}
-                        activeClassName="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
-                      >
-                        <item.icon className="h-5 w-5 shrink-0" />
-                        <span
-                          className={`whitespace-nowrap text-sm transition-all ${
+                {navItems.map((item) => {
+                  const badgeCount = getBadgeCount(item.title);
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton asChild>
+                        <NavLink
+                          to={item.url}
+                          end={item.url === "/"}
+                          className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
                             isCollapsed
-                              ? "w-0 overflow-hidden opacity-0"
-                              : "opacity-100"
+                              ? "mx-auto w-12 justify-center px-0"
+                              : "mx-2 gap-3 px-3"
                           }`}
+                          activeClassName="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
                         >
-                          {item.title}
-                        </span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                          <span className="relative inline-flex shrink-0">
+                            <item.icon className="h-5 w-5 shrink-0" />
+                            {badgeCount > 0 && (
+                              <span
+                                className={cn(
+                                  "absolute -right-2 -top-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white",
+                                  isCollapsed && "-right-1.5 -top-1.5",
+                                )}
+                              >
+                                {badgeCount > 99 ? "99+" : badgeCount}
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className={`whitespace-nowrap text-sm transition-all ${
+                              isCollapsed
+                                ? "w-0 overflow-hidden opacity-0"
+                                : "opacity-100"
+                            }`}
+                          >
+                            {item.title}
+                          </span>
+                        </NavLink>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

@@ -4,7 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { getDatabase, ref, get, set, push, remove } from "firebase/database";
+import { getDatabase, ref, get, set, push, remove, update } from "firebase/database";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { getBlockStatus } from "@/utils/blocking";
@@ -104,9 +104,27 @@ export default function Notifications() {
                 new Date(a.timestamp).getTime(),
             );
 
-          setAllNotificationsData(notificationsArray);
-          setHasMoreNotifications(notificationsArray.length > displayedCount);
-          setNotifications(notificationsArray.slice(0, displayedCount));
+          const normalized = notificationsArray.map((entry) => ({
+            ...entry,
+            read: entry.read === true,
+          }));
+
+          setAllNotificationsData(normalized);
+          setHasMoreNotifications(normalized.length > displayedCount);
+          setNotifications(normalized.slice(0, displayedCount));
+
+          const unreadUpdates: Record<string, boolean> = {};
+          normalized.forEach((entry) => {
+            if (entry.read !== true) {
+              unreadUpdates[`${entry.id}/read`] = true;
+            }
+          });
+
+          if (Object.keys(unreadUpdates).length > 0) {
+            await update(ref(db, `notifications/${user.uid}`), unreadUpdates).catch(
+              () => undefined,
+            );
+          }
         } else {
           setNotifications([]);
           setAllNotificationsData([]);
@@ -525,6 +543,12 @@ export default function Notifications() {
                             (notification.message || "updated privacy settings.")}
                           {notification.type === "mention" &&
                             `mentioned you in a ${getMentionSourceLabel(notification)}.`}
+                          {notification.type === "story_reaction" &&
+                            (notification.message || "reacted to your story.")}
+                          {notification.type === "story_comment" &&
+                            (notification.message || "commented on your story.")}
+                          {notification.type === "story_reply" &&
+                            (notification.message || "replied to your story.")}
                         </span>{" "}
                         <span className="text-muted-foreground text-xs">
                           {getTimeAgo(notification.timestamp)}
@@ -669,3 +693,4 @@ export default function Notifications() {
     </div>
   );
 }
+

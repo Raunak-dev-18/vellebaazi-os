@@ -126,6 +126,30 @@
       }
     },
 
+    "storyReactions": {
+      "$storyId": {
+        ".read": "auth != null && root.child('stories/' + $storyId).exists() && ((root.child('stories/' + $storyId + '/audience').val() === 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())) || (root.child('stories/' + $storyId + '/audience').val() !== 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('following/' + auth.uid + '/' + root.child('stories/' + $storyId + '/userId').val()).exists() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())))",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && root.child('stories/' + $storyId).exists() && root.child('stories/' + $storyId + '/expiresAt').val() > now && ((root.child('stories/' + $storyId + '/audience').val() === 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())) || (root.child('stories/' + $storyId + '/audience').val() !== 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('following/' + auth.uid + '/' + root.child('stories/' + $storyId + '/userId').val()).exists() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())))",
+          ".validate": "newData.val() == null || (newData.hasChildren(['emoji', 'userId', 'createdAt']) && newData.child('emoji').isString() && newData.child('emoji').val().length > 0 && newData.child('emoji').val().length <= 16 && newData.child('userId').val() === $uid && (newData.child('createdAt').isNumber() || newData.child('createdAt').isString()) && (!newData.child('username').exists() || newData.child('username').isString()) && (!newData.child('userAvatar').exists() || newData.child('userAvatar').isString()))"
+        }
+      }
+    },
+
+    "storyComments": {
+      "$storyId": {
+        ".read": "auth != null && root.child('stories/' + $storyId).exists() && ((root.child('stories/' + $storyId + '/audience').val() === 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())) || (root.child('stories/' + $storyId + '/audience').val() !== 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('following/' + auth.uid + '/' + root.child('stories/' + $storyId + '/userId').val()).exists() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())))",
+        "$commentId": {
+          ".write": "auth != null && root.child('stories/' + $storyId).exists() && root.child('stories/' + $storyId + '/expiresAt').val() > now && ((root.child('stories/' + $storyId + '/audience').val() === 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists())) || (root.child('stories/' + $storyId + '/audience').val() !== 'close_friends' && (auth.uid === root.child('stories/' + $storyId + '/userId').val() || root.child('following/' + auth.uid + '/' + root.child('stories/' + $storyId + '/userId').val()).exists() || root.child('closeFriends/' + root.child('stories/' + $storyId + '/userId').val() + '/' + auth.uid).exists()))) && ((!data.exists() && newData.child('userId').val() === auth.uid) || (data.exists() && data.child('userId').val() === auth.uid))",
+          "userId": { ".validate": "newData.isString()" },
+          "username": { ".validate": "newData.isString() || newData.val() == null" },
+          "userAvatar": { ".validate": "newData.isString() || newData.val() == null" },
+          "text": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 400" },
+          "createdAt": { ".validate": "newData.isNumber() || newData.isString()" },
+          "$other": { ".validate": true }
+        }
+      }
+    },
     "followers": {
       ".read": "auth != null",
       "$uid": {
@@ -407,3 +431,4 @@
     }
   }
 }
+
