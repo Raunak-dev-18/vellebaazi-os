@@ -406,11 +406,11 @@ export default function Home() {
     user?.displayName || user?.email?.split("@")[0] || "user";
 
   return (
-    <div className="flex justify-center gap-8 max-w-[1200px] mx-auto">
+    <div className="mx-auto flex w-full max-w-[1200px] justify-center gap-6 px-0 md:px-4 lg:px-6">
       {/* Main Feed */}
-      <div className="max-w-[630px] flex-1">
+      <div className="w-full max-w-[630px] flex-1">
         <Stories />
-        <div className="py-6 px-4">
+        <div className="px-3 py-4 md:px-4 md:py-6">
           {loadingPosts ? (
             <div className="space-y-6">
               {[...Array(3)].map((_, i) => (
@@ -465,7 +465,7 @@ export default function Home() {
       </div>
 
       {/* Right Sidebar - Suggested Users */}
-      <div className="hidden xl:block w-80 shrink-0 pt-8">
+      <div className="hidden w-80 shrink-0 pt-8 xl:block">
         <div className="sticky top-8">
           {/* Current User */}
           <div className="flex items-center gap-3 mb-6">

@@ -4,10 +4,13 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { MobileTopBar } from "@/components/MobileTopBar";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 // Lazy load pages for better performance
 const Home = lazy(() => import("./pages/Home"));
@@ -23,6 +26,7 @@ const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Create = lazy(() => import("./pages/Create"));
+const Groups = lazy(() => import("./pages/Groups"));
 
 // Page loading component
 function PageLoader() {
@@ -96,26 +100,36 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <SidebarProvider>
-                <div className="flex min-h-screen w-full">
-                  <AppSidebar />
-                  <main className="flex-1">
-                    <div className="sticky top-0 z-10 bg-background border-b border-border p-2 lg:hidden">
-                      <SidebarTrigger />
-                    </div>
+                <div className="flex min-h-screen w-full bg-background">
+                  <div className="hidden md:block">
+                    <AppSidebar />
+                  </div>
+                  <main className="relative flex min-h-screen flex-1 flex-col">
+                    <MobileTopBar />
                     <Suspense fallback={<PageLoader />}>
-                      <Routes>
-                        <Route path="/" element={<Home />} />
-                        <Route path="/timepass" element={<Timepass />} />
-                        <Route path="/bakaiti" element={<Bakaiti />} />
-                        <Route path="/create" element={<Create />} />
-                        <Route path="/profile" element={<Profile />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="/explore" element={<Explore />} />
-                        <Route path="/notifications" element={<Notifications />} />
-                        <Route path="/users/profile/:username" element={<UserProfile />} />
-                        <Route path="*" element={<NotFound />} />
-                      </Routes>
+                      <div className="flex-1 pb-20 md:pb-0">
+                        <Routes>
+                          <Route path="/" element={<Home />} />
+                          <Route path="/timepass" element={<Timepass />} />
+                          <Route path="/bakaiti" element={<Bakaiti />} />
+                          <Route path="/groups" element={<Groups />} />
+                          <Route path="/create" element={<Create />} />
+                          <Route path="/profile" element={<Profile />} />
+                          <Route path="/settings" element={<Settings />} />
+                          <Route path="/explore" element={<Explore />} />
+                          <Route
+                            path="/notifications"
+                            element={<Notifications />}
+                          />
+                          <Route
+                            path="/users/profile/:username"
+                            element={<UserProfile />}
+                          />
+                          <Route path="*" element={<NotFound />} />
+                        </Routes>
+                      </div>
                     </Suspense>
+                    <MobileBottomNav />
                   </main>
                 </div>
               </SidebarProvider>
@@ -136,6 +150,7 @@ const App = () => {
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <PwaInstallPrompt />
           <BrowserRouter>
             <AuthProvider>
               <AppContent />

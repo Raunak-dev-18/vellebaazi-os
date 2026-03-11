@@ -7,6 +7,16 @@ import express from "express";
 import type { Request, Response } from "express";
 import multer from "multer";
 
+const getErrorDetails = (error: unknown): string => {
+  if (!(error instanceof Error)) return String(error);
+  let msg = error.message;
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause) {
+    msg += ` | cause: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+  return msg;
+};
+
 const createStorageProxy = (env: Record<string, string>) => {
   const app = express();
   const upload = multer({
@@ -21,6 +31,10 @@ const createStorageProxy = (env: Record<string, string>) => {
   const STORAGE_TOKEN = env.STORAGE_API_TOKEN || process.env.STORAGE_API_TOKEN;
   const STORAGE_BUCKET_ID =
     env.STORAGE_BUCKET_ID || process.env.STORAGE_BUCKET_ID;
+
+  console.log(
+    `[storage-proxy] BASE_URL=${STORAGE_BASE_URL} TOKEN=${STORAGE_TOKEN ? "SET" : "MISSING"} BUCKET=${STORAGE_BUCKET_ID || "MISSING"}`,
+  );
 
   const assertConfigured = (res: Response) => {
     if (!STORAGE_TOKEN || !STORAGE_BUCKET_ID) {
@@ -50,6 +64,10 @@ const createStorageProxy = (env: Record<string, string>) => {
       }
 
       const fileName = req.body?.fileName || req.file.originalname;
+      console.log(
+        `[storage-proxy] Upload request: file="${fileName}" size=${req.file.size} type=${req.file.mimetype}`,
+      );
+
       const formData = new FormData();
       formData.append("folder_name", STORAGE_BUCKET_ID as string);
       const blob = new Blob([req.file.buffer], {
@@ -74,12 +92,13 @@ const createStorageProxy = (env: Record<string, string>) => {
         }
 
         const data = await response.json();
+        console.log("[storage-proxy] Upload success:", JSON.stringify(data));
         res.status(200).json(data);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Upload failed.";
-        console.error("Storage upload error:", message);
-        res.status(500).json({ error: message });
+        const details = getErrorDetails(error);
+        console.error("Storage upload error:", details);
+        console.error("Full error:", error);
+        res.status(500).json({ error: details });
       }
     },
   );
