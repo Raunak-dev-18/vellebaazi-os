@@ -29,9 +29,12 @@ interface GifPickerProps {
   onClose: () => void;
 }
 
+type MediaPickerType = "gifs" | "stickers";
+
 export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
   const [gifSearchQuery, setGifSearchQuery] = useState("");
+  const [pickerType, setPickerType] = useState<MediaPickerType>("gifs");
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
   const [gifOffset, setGifOffset] = useState(0);
   const [hasMoreGifs, setHasMoreGifs] = useState(false);
@@ -50,7 +53,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
       try {
         const currentOffset = loadMore ? gifOffset : 0;
         const response = await fetch(
-          `https://api.giphy.com/v1/gifs/trending?api_key=${apiKey}&limit=20&offset=${currentOffset}&rating=g`,
+          `https://api.giphy.com/v1/${pickerType}/trending?api_key=${apiKey}&limit=20&offset=${currentOffset}&rating=g`,
         );
         const data = await response.json();
         const newGifs = data.data || [];
@@ -68,7 +71,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
         setIsLoadingGifs(false);
       }
     },
-    [apiKey, gifOffset],
+    [apiKey, gifOffset, pickerType],
   );
 
   const searchGifs = useCallback(
@@ -85,7 +88,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
       try {
         const currentOffset = loadMore ? gifOffset : 0;
         const response = await fetch(
-          `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
+          `https://api.giphy.com/v1/${pickerType}/search?api_key=${apiKey}&q=${encodeURIComponent(query)}&limit=20&offset=${currentOffset}&rating=g`,
         );
         const data = await response.json();
         const newGifs = data.data || [];
@@ -103,7 +106,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
         setIsLoadingGifs(false);
       }
     },
-    [apiKey, fetchTrendingGifs, gifOffset],
+    [apiKey, fetchTrendingGifs, gifOffset, pickerType],
   );
 
   const loadMoreGifs = async () => {
@@ -124,7 +127,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
   useEffect(() => {
     if (!apiReady) return;
     fetchTrendingGifs(false);
-  }, [apiReady, fetchTrendingGifs]);
+  }, [apiReady, fetchTrendingGifs, pickerType]);
 
   useEffect(() => {
     if (!apiReady) return;
@@ -143,7 +146,9 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
     <div className="absolute bottom-full left-4 mb-2 w-[320px] bg-background border border-border rounded-lg shadow-lg z-30 max-h-[300px] flex flex-col">
       <div className="p-2 border-b border-border">
         <div className="flex items-center justify-between mb-2">
-          <span className="font-semibold text-sm">GIFs</span>
+          <span className="font-semibold text-sm">
+            {pickerType === "gifs" ? "GIFs" : "Stickers"}
+          </span>
           <Button
             variant="ghost"
             size="icon"
@@ -156,26 +161,54 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
         <div className="relative">
           <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search GIFs..."
+            placeholder={
+              pickerType === "gifs" ? "Search GIFs..." : "Search stickers..."
+            }
             value={gifSearchQuery}
             onChange={(e) => setGifSearchQuery(e.target.value)}
             className="pl-8 h-8 text-sm bg-secondary border-0"
           />
         </div>
+        <div className="mt-2 flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={pickerType === "gifs" ? "default" : "outline"}
+            className="h-7 px-2 text-xs"
+            onClick={() => {
+              setPickerType("gifs");
+              setGifOffset(0);
+            }}
+          >
+            GIF
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={pickerType === "stickers" ? "default" : "outline"}
+            className="h-7 px-2 text-xs"
+            onClick={() => {
+              setPickerType("stickers");
+              setGifOffset(0);
+            }}
+          >
+            Sticker
+          </Button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {!apiReady ? (
-          <div className="text-center py-6 text-muted-foreground text-sm">
-            <p>GIFs are disabled until a Giphy key is configured.</p>
-          </div>
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <p>GIFs/Stickers are disabled until a Giphy key is configured.</p>
+            </div>
         ) : isLoadingGifs ? (
           <div className="flex items-center justify-center py-6">
             <div className="h-6 w-6 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
           </div>
         ) : gifs.length === 0 ? (
-          <div className="text-center py-6 text-muted-foreground text-sm">
-            <p>No GIFs found</p>
-          </div>
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <p>No results found</p>
+            </div>
         ) : (
           <div className="space-y-2">
             <div className="grid grid-cols-3 gap-1">
@@ -207,7 +240,7 @@ export function GifPicker({ apiKey, onSelect, onClose }: GifPickerProps) {
                     Loading...
                   </>
                 ) : (
-                  "Load More GIFs"
+                  pickerType === "gifs" ? "Load More GIFs" : "Load More Stickers"
                 )}
               </button>
             )}

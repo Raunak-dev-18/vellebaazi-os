@@ -7,6 +7,7 @@ import {
   Plus,
   Search,
   Send,
+  Smile,
   UserMinus,
   UserPlus,
   Users,
@@ -44,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { GifPicker, type GifPick } from "@/components/chat/GifPicker";
 
 type Role = "admin" | "member";
 type ConvType = "dm" | "group";
@@ -126,9 +128,12 @@ export default function Bakaiti() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationKey, setConversationKey] = useState<Uint8Array | null>(null);
   const [e2eeEnabled, setE2eeEnabled] = useState(false);
+  const [e2eeRuntimeDisabled, setE2eeRuntimeDisabled] = useState(false);
   const [search, setSearch] = useState("");
   const [messageText, setMessageText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedGif, setSelectedGif] = useState<GifPick | null>(null);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -157,6 +162,8 @@ export default function Bakaiti() {
 
   const selectedConversation =
     conversations.find((c) => c.key === selectedKey) || null;
+  const e2eeActive = e2eeEnabled && !e2eeRuntimeDisabled;
+  const giphyApiKey = (import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || undefined;
 
   const isGroupConversation =
     selectedConversation?.type === "group" ? selectedConversation : null;
@@ -203,6 +210,12 @@ export default function Bakaiti() {
       setSelectedKey(null);
     }
   }, [blockedByMe, blockedMe, selectedConversation]);
+
+  useEffect(() => {
+    setShowGifPicker(false);
+    setSelectedGif(null);
+    setE2eeRuntimeDisabled(false);
+  }, [selectedKey]);
 
   const resolveConversationParticipants = useCallback(
     async (conversation: Conversation) => {
@@ -479,10 +492,19 @@ export default function Bakaiti() {
         });
         if (active) {
           setConversationKey(key);
+          if (key) {
+            setE2eeRuntimeDisabled(false);
+          }
         }
       } catch (error) {
         console.error("E2EE setup failed:", error);
-        if (active) setConversationKey(null);
+        if (active) {
+          setConversationKey(null);
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.toLowerCase().includes("permission denied")) {
+            setE2eeRuntimeDisabled(true);
+          }
+        }
       }
     };
 
@@ -896,7 +918,7 @@ export default function Bakaiti() {
       return;
     }
 
-    if (!textValidation.data && !selectedFile) return;
+    if (!textValidation.data && !selectedFile && !selectedGif) return;
     if (sending) return;
     setSending(true);
     try {
@@ -947,14 +969,53 @@ export default function Bakaiti() {
         }
       }
 
+      if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
+        const chatId = selectedConversation.id;
+        const selfChatRef = ref(db, `userChats/${user.uid}/${chatId}`);
+        const peerChatRef = ref(
+          db,
+          `userChats/${selectedConversation.otherUserId}/${chatId}`,
+        );
+
+        const selfChat = await get(selfChatRef).catch(() => null);
+        if (!selfChat?.exists()) {
+          await set(selfChatRef, {
+            otherUserId: selectedConversation.otherUserId,
+            otherUsername: selectedConversation.title,
+            otherUserAvatar: selectedConversation.avatar,
+            lastMessage: "",
+            lastMessageTime: new Date().toISOString(),
+          });
+        }
+
+        const peerChat = await get(peerChatRef).catch(() => null);
+        if (!peerChat?.exists()) {
+          await set(peerChatRef, {
+            otherUserId: user.uid,
+            otherUsername: username,
+            otherUserAvatar: selfAvatar,
+            lastMessage: "",
+            lastMessageTime: new Date().toISOString(),
+          }).catch(() => undefined);
+        }
+      }
+
       const now = new Date().toISOString();
       let fileUrl = "";
+      let fileName = "";
+      let fileType = "";
       if (selectedFile) {
         const ext = selectedFile.name.split(".").pop() || "file";
         fileUrl = await uploadToChatStorage(
           selectedFile,
           `${selectedConversation.id}/${Date.now()}_${user.uid}.${ext}`,
         );
+        fileName = selectedFile.name;
+        fileType = selectedFile.type;
+      } else if (selectedGif) {
+        fileUrl = selectedGif.url;
+        fileName = selectedGif.title || "GIF";
+        fileType = "image/gif";
       }
 
       let finalText = textValidation.data;
@@ -963,7 +1024,7 @@ export default function Bakaiti() {
       let encryption: string | undefined;
 
       let activeKey = conversationKey;
-      if (!activeKey && finalText && e2eeEnabled) {
+      if (!activeKey && finalText && e2eeActive) {
         try {
           const participants = await resolveConversationParticipants(selectedConversation);
           activeKey = await ensureConversationKey({
@@ -973,12 +1034,19 @@ export default function Bakaiti() {
             currentUserId: user.uid,
           });
           setConversationKey(activeKey);
+          if (activeKey) {
+            setE2eeRuntimeDisabled(false);
+          }
         } catch (error) {
           console.error("E2EE setup failed during send; falling back to standard message.", error);
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.toLowerCase().includes("permission denied")) {
+            setE2eeRuntimeDisabled(true);
+          }
         }
       }
 
-      if (activeKey && finalText && e2eeEnabled) {
+      if (activeKey && finalText && e2eeActive) {
         const encryptedPayload = await encryptTextWithKey(finalText, activeKey);
         encryptedText = encryptedPayload.ciphertext;
         encryptedIv = encryptedPayload.iv;
@@ -986,17 +1054,17 @@ export default function Bakaiti() {
         finalText = "";
       }
 
-      const msg = {
+      const msg: Record<string, unknown> = {
         senderId: user.uid,
         senderName: username,
         text: finalText || (selectedFile ? "Sent an attachment" : ""),
         timestamp: now,
-        encryptedText,
-        encryptedIv,
-        encryption,
-        fileUrl: fileUrl || undefined,
-        fileName: selectedFile?.name,
-        fileType: selectedFile?.type,
+        ...(encryptedText ? { encryptedText } : {}),
+        ...(encryptedIv ? { encryptedIv } : {}),
+        ...(encryption ? { encryption } : {}),
+        ...(fileUrl ? { fileUrl } : {}),
+        ...(fileName ? { fileName } : {}),
+        ...(fileType ? { fileType } : {}),
       };
 
       const path =
@@ -1005,65 +1073,83 @@ export default function Bakaiti() {
           : `messages/${selectedConversation.id}`;
       await set(push(ref(db, path)), msg);
 
-      const preview = textValidation.data || (selectedFile ? `Attachment: ${selectedFile.name}` : "");
+      const preview =
+        textValidation.data ||
+        (selectedGif
+          ? "GIF"
+          : selectedFile
+            ? `Attachment: ${selectedFile.name}`
+            : "");
       if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
-        await Promise.all([
-          set(ref(db, `userChats/${user.uid}/${selectedConversation.id}/lastMessage`), preview),
-          set(ref(db, `userChats/${user.uid}/${selectedConversation.id}/lastMessageTime`), now),
-          set(
-            ref(
-              db,
-              `userChats/${selectedConversation.otherUserId}/${selectedConversation.id}/lastMessage`,
-            ),
-            preview,
+        const selfPayload = {
+          otherUserId: selectedConversation.otherUserId,
+          otherUsername: selectedConversation.title,
+          otherUserAvatar: selectedConversation.avatar,
+          lastMessage: preview,
+          lastMessageTime: now,
+        };
+        const peerPayload = {
+          otherUserId: user.uid,
+          otherUsername: username,
+          otherUserAvatar: selfAvatar,
+          lastMessage: preview,
+          lastMessageTime: now,
+        };
+        await set(ref(db, `userChats/${user.uid}/${selectedConversation.id}`), selfPayload);
+        await set(
+          ref(
+            db,
+            `userChats/${selectedConversation.otherUserId}/${selectedConversation.id}`,
           ),
-          set(
-            ref(
-              db,
-              `userChats/${selectedConversation.otherUserId}/${selectedConversation.id}/lastMessageTime`,
-            ),
-            now,
-          ),
-        ]);
+          peerPayload,
+        ).catch((error) => {
+          console.error("Peer chat metadata update failed:", error);
+        });
       } else if (selectedConversation.type === "group") {
-        await update(ref(db, `groups/${selectedConversation.id}`), { updatedAt: now });
-        const members = await get(ref(db, `groupMembers/${selectedConversation.id}`));
-        if (members.exists()) {
-          const m = members.val() as Record<string, Record<string, unknown>>;
-          await Promise.all(
-            Object.entries(m).map(([uid, info]) =>
-              update(ref(db, `userGroups/${uid}/${selectedConversation.id}`), {
-                name: selectedConversation.title,
-                role: (info.role as Role) || "member",
-                updatedAt: now,
-                lastMessage: preview,
-              }),
-            ),
-          );
+        try {
+          await update(ref(db, `groups/${selectedConversation.id}`), { updatedAt: now });
+          const members = await get(ref(db, `groupMembers/${selectedConversation.id}`));
+          if (members.exists()) {
+            const m = members.val() as Record<string, Record<string, unknown>>;
+            await Promise.all(
+              Object.entries(m).map(([uid, info]) =>
+                update(ref(db, `userGroups/${uid}/${selectedConversation.id}`), {
+                  name: selectedConversation.title,
+                  role: (info.role as Role) || "member",
+                  updatedAt: now,
+                  lastMessage: preview,
+                }),
+              ),
+            );
 
-          const usernamesInMessage = extractMentions(textValidation.data);
-          if (usernamesInMessage.length > 0) {
-            await sendMentionNotifications({
-              actorUserId: user.uid,
-              actorUsername: username,
-              actorAvatar: selfAvatar,
-              text: textValidation.data,
-              sourceType: "group_message",
-              sourceId: selectedConversation.id,
-              groupId: selectedConversation.id,
-              chatId: selectedConversation.id,
-              usernames: usernamesInMessage,
-              knownUsers: Object.entries(m).map(([uid, info]) => ({
-                uid,
-                username: (info.username as string) || "",
-              })),
-            });
+            const usernamesInMessage = extractMentions(textValidation.data);
+            if (usernamesInMessage.length > 0) {
+              await sendMentionNotifications({
+                actorUserId: user.uid,
+                actorUsername: username,
+                actorAvatar: selfAvatar,
+                text: textValidation.data,
+                sourceType: "group_message",
+                sourceId: selectedConversation.id,
+                groupId: selectedConversation.id,
+                chatId: selectedConversation.id,
+                usernames: usernamesInMessage,
+                knownUsers: Object.entries(m).map(([uid, info]) => ({
+                  uid,
+                  username: (info.username as string) || "",
+                })),
+              });
+            }
           }
+        } catch (groupUpdateError) {
+          console.error("Group metadata update failed after sending message:", groupUpdateError);
         }
       }
 
       setMessageText("");
       setSelectedFile(null);
+      setSelectedGif(null);
+      setShowGifPicker(false);
     } catch (error) {
       console.error(error);
       const message = error instanceof Error ? error.message : "Permission denied";
@@ -1254,8 +1340,8 @@ export default function Bakaiti() {
                 {selectedConversation.type === "group" && selectedConversation.role && (
                   <Badge variant="outline">{selectedConversation.role}</Badge>
                 )}
-                <Badge variant={e2eeEnabled ? "secondary" : "outline"}>
-                  {e2eeEnabled ? "E2EE" : "Standard"}
+                <Badge variant={e2eeActive ? "secondary" : "outline"}>
+                  {e2eeActive ? "E2EE" : "Standard"}
                 </Badge>
               </div>
               {selectedConversation.type === "group" && (
@@ -1345,16 +1431,74 @@ export default function Bakaiti() {
             </ScrollArea>
 
             <div className="border-t border-border p-3">
-              <input ref={fileInputRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt" className="hidden" onChange={(e: ChangeEvent<HTMLInputElement>) => setSelectedFile(e.target.files?.[0] || null)} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.doc,.docx,.txt"
+                className="hidden"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  setSelectedFile(e.target.files?.[0] || null);
+                  if (e.target.files?.[0]) {
+                    setSelectedGif(null);
+                  }
+                }}
+              />
               {selectedFile && (
                 <div className="mb-2 flex items-center justify-between rounded-md bg-secondary px-2 py-1 text-xs">
                   <span className="truncate">{selectedFile.name}</span>
                   <Button variant="ghost" size="sm" onClick={() => setSelectedFile(null)}>Remove</Button>
                 </div>
               )}
-              <div className="flex items-center gap-2">
+              {selectedGif && (
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/70 p-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <img
+                      src={selectedGif.url}
+                      alt={selectedGif.title || "Selected GIF"}
+                      className="h-12 w-12 flex-shrink-0 rounded object-cover"
+                      loading="lazy"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        GIF
+                      </p>
+                      <p className="truncate text-xs">
+                        {selectedGif.title || "Selected GIF"}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setSelectedGif(null)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              )}
+              <div className="relative flex items-center gap-2">
+                {showGifPicker && (
+                  <GifPicker
+                    apiKey={giphyApiKey}
+                    onSelect={(gif) => {
+                      setSelectedGif(gif);
+                      setSelectedFile(null);
+                      setShowGifPicker(false);
+                    }}
+                    onClose={() => setShowGifPicker(false)}
+                  />
+                )}
                 <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()} disabled={sending}>
                   <Paperclip className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant={showGifPicker ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() => setShowGifPicker((prev) => !prev)}
+                  disabled={sending}
+                >
+                  <Smile className="h-5 w-5" />
                 </Button>
                 <MentionInput
                   placeholder="Message... Use @ to mention"
@@ -1369,7 +1513,12 @@ export default function Bakaiti() {
                   className="border-0 bg-secondary"
                   disabled={sending}
                 />
-                <Button variant="ghost" size="icon" onClick={sendMessage} disabled={sending || (!messageText.trim() && !selectedFile)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={sendMessage}
+                  disabled={sending || (!messageText.trim() && !selectedFile && !selectedGif)}
+                >
                   {sending ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Send className="h-5 w-5" />}
                 </Button>
               </div>

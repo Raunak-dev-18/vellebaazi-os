@@ -283,6 +283,7 @@
       "$groupId": {
         ".read": "auth != null && root.child('groupMembers/' + $groupId + '/' + auth.uid).exists()",
         "$uid": {
+          ".read": "auth != null && (auth.uid === $uid || root.child('groupMembers/' + $groupId + '/' + auth.uid).exists())",
           ".write": "auth != null && (auth.uid === $uid || root.child('groupMembers/' + $groupId + '/' + auth.uid + '/role').val() === 'admin' || !root.child('groupMembers/' + $groupId).exists())",
           "username": { ".validate": "newData.isString() || newData.val() == null" },
           "avatar": { ".validate": "newData.isString() || newData.val() == null" },
@@ -375,8 +376,8 @@
           "$conversationId": {
             "keys": {
               "$uid": {
-                ".read": "auth != null && (($scope === 'dm' && root.child('userChats/' + auth.uid + '/' + $conversationId).exists()) || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
-                ".write": "auth != null && (($scope === 'dm' && root.child('userChats/' + auth.uid + '/' + $conversationId).exists()) || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
+                ".read": "auth != null && (($scope === 'dm') || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
+                ".write": "auth != null && (($scope === 'dm') || ($scope === 'group' && root.child('groupMembers/' + $conversationId + '/' + auth.uid).exists()))",
                 "wrappedKey": { ".validate": "newData.isString()" },
                 "wrappedAt": { ".validate": "newData.isString() || newData.isNumber()" },
                 "wrappedBy": { ".validate": "newData.isString() && newData.val() === auth.uid" },

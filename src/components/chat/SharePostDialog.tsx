@@ -228,11 +228,11 @@ export function SharePostDialog({
         senderId: user.uid,
         senderName,
         text,
-        encryptedText,
-        encryptedIv,
-        encryption,
         timestamp: now,
         sharedPost,
+        ...(encryptedText ? { encryptedText } : {}),
+        ...(encryptedIv ? { encryptedIv } : {}),
+        ...(encryption ? { encryption } : {}),
       };
 
       if (target.type === "dm" && target.otherUserId) {
