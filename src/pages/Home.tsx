@@ -192,10 +192,12 @@ export default function Home() {
         setPosts(postsData.slice(0, displayedCount));
       } catch (error: unknown) {
         console.error("Error fetching posts:", error);
+        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
         toast({
           title: "Error Loading Posts",
-          description:
-            "Could not load posts. Please check if Firestore is enabled.",
+          description: isOffline
+            ? "You're offline. Reconnect to the internet and refresh."
+            : "Could not load posts from Realtime Database. Please check your network/database rules.",
           variant: "destructive",
         });
       } finally {
@@ -402,7 +404,7 @@ export default function Home() {
   const getTimeAgo = (timestamp: unknown) => {
     if (!timestamp) return "Just now";
 
-    // Handle Firestore Timestamp
+    // Handle Firebase timestamp-like values
     const date =
       typeof timestamp === "object" &&
       timestamp !== null &&
