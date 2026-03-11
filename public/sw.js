@@ -1,4 +1,4 @@
-const CACHE_NAME = "velle-baazi-v3";
+const CACHE_NAME = "velle-baazi-v4";
 const OFFLINE_FALLBACK = "/offline.html";
 const APP_SHELL = [
   OFFLINE_FALLBACK,

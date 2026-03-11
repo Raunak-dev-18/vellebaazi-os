@@ -6,6 +6,7 @@ const RECOVERY_STORAGE_KEY = "__vb_runtime_recovery_v2";
 const RECOVERY_PARAM = "vb-recover";
 const RECOVERY_MAX_ATTEMPTS = 3;
 const RECOVERY_WINDOW_MS = 5 * 60 * 1000;
+const SERVICE_WORKER_URL = "/sw.js?v=20260311-2";
 
 type RecoveryState = {
   attempts: number;
@@ -152,7 +153,7 @@ const bootstrap = async () => {
         if (!import.meta.env.PROD) return;
 
         navigator.serviceWorker
-          .register("/sw.js")
+          .register(SERVICE_WORKER_URL)
           .then((registration) => registration.update())
           .catch((error) => {
             console.error("Service worker registration failed:", error);
