@@ -8,6 +8,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { getDatabase, ref, get, set, push, remove } from "firebase/database";
 import { useToast } from "@/hooks/use-toast";
 import { getSafeAvatarUrl } from "@/utils/media";
+import { getBlockMapsForUser, getBlockStatus } from "@/utils/blocking";
 
 interface SuggestedUser {
   uid: string;

@@ -7,9 +7,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { uploadToChatStorage } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { extractMentions } from "@/utils/mentions";
+import { sendMentionNotifications } from "@/utils/mentionNotifications";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MentionInput } from "@/components/MentionInput";
+import { MentionText } from "@/components/MentionText";
 import {
   Dialog,
   DialogContent,
@@ -355,6 +359,25 @@ export default function Bakaiti() {
               }),
             ),
           );
+
+          const usernamesInMessage = extractMentions(text);
+          if (usernamesInMessage.length > 0) {
+            await sendMentionNotifications({
+              actorUserId: user.uid,
+              actorUsername: username,
+              actorAvatar: selfAvatar,
+              text,
+              sourceType: "group_message",
+              sourceId: selectedConversation.id,
+              groupId: selectedConversation.id,
+              chatId: selectedConversation.id,
+              usernames: usernamesInMessage,
+              knownUsers: Object.entries(m).map(([uid, info]) => ({
+                uid,
+                username: (info.username as string) || "",
+              })),
+            });
+          }
         }
       }
 
@@ -533,7 +556,11 @@ export default function Bakaiti() {
                         {m.fileUrl && m.fileType && !m.fileType.startsWith("image/") && (
                           <a href={m.fileUrl} target="_blank" rel="noreferrer" className="mb-1 block text-xs underline">{m.fileName || "Attachment"}</a>
                         )}
-                        {m.text && <p className="whitespace-pre-wrap text-sm">{m.text}</p>}
+                        {m.text && (
+                          <p className="whitespace-pre-wrap text-sm">
+                            <MentionText text={m.text} />
+                          </p>
+                        )}
                         <p className="mt-1 text-[10px] opacity-70">{timeAgo(m.timestamp)}</p>
                       </div>
                     </div>
@@ -555,17 +582,18 @@ export default function Bakaiti() {
                 <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()} disabled={sending}>
                   <Paperclip className="h-5 w-5" />
                 </Button>
-                <Input
-                  placeholder="Message..."
+                <MentionInput
+                  placeholder="Message... Use @ to mention"
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
-                  onKeyDown={(e) => {
+                  onChange={setMessageText}
+                  onKeyPress={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       sendMessage();
                     }
                   }}
                   className="border-0 bg-secondary"
+                  disabled={sending}
                 />
                 <Button variant="ghost" size="icon" onClick={sendMessage} disabled={sending || (!messageText.trim() && !selectedFile)}>
                   {sending ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Send className="h-5 w-5" />}

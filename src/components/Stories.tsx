@@ -17,6 +17,7 @@ import { uploadToStorage } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import { StoryEditor } from "@/components/StoryEditor";
 import { getSafeAvatarUrl } from "@/utils/media";
+import { sendMentionNotifications } from "@/utils/mentionNotifications";
 
 interface Story {
   id: string;
@@ -25,6 +26,8 @@ interface Story {
   userAvatar: string;
   mediaUrl: string;
   mediaType: "image" | "video";
+  audience?: "public" | "close_friends";
+  mentions?: string[];
   createdAt: number;
   expiresAt: number;
 }
@@ -35,6 +38,8 @@ interface StoryRecord {
   userAvatar: string;
   mediaUrl: string;
   mediaType: "image" | "video";
+  audience?: "public" | "close_friends";
+  mentions?: string[];
   createdAt: number;
   expiresAt: number;
 }
@@ -52,6 +57,8 @@ export function Stories() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [storyAudience, setStoryAudience] = useState<"public" | "close_friends">("public");
+  const [closeFriendsCount, setCloseFriendsCount] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [currentStoryUser, setCurrentStoryUser] = useState<string | null>(null);
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
@@ -68,12 +75,45 @@ export function Stories() {
       if (snapshot.exists()) {
         const allStories = snapshot.val() as Record<string, StoryRecord>;
         const now = Date.now();
+        const restrictedOwners = new Set<string>();
+
+        Object.values(allStories).forEach((story) => {
+          if (
+            story.expiresAt > now &&
+            story.audience === "close_friends" &&
+            story.userId !== user.uid
+          ) {
+            restrictedOwners.add(story.userId);
+          }
+        });
+
+        const allowedCloseFriendsOwners = new Set<string>();
+        await Promise.all(
+          Array.from(restrictedOwners).map(async (ownerId) => {
+            const canViewSnapshot = await get(
+              ref(db, `closeFriends/${ownerId}/${user.uid}`),
+            );
+            if (canViewSnapshot.exists()) {
+              allowedCloseFriendsOwners.add(ownerId);
+            }
+          }),
+        );
 
         // Group stories by user and filter expired ones
         const groupedStories: { [userId: string]: Story[] } = {};
 
         Object.entries(allStories).forEach(([storyId, story]) => {
           if (story.expiresAt > now) {
+            const isCloseFriendsOnly = story.audience === "close_friends";
+            const canViewStory =
+              !isCloseFriendsOnly ||
+              story.userId === user.uid ||
+              allowedCloseFriendsOwners.has(story.userId);
+
+            if (!canViewStory) {
+              return;
+            }
+
             if (!groupedStories[story.userId]) {
               groupedStories[story.userId] = [];
             }
@@ -146,12 +186,34 @@ export function Stories() {
     }
   }, [fetchStories]);
 
+  const fetchCloseFriendsCount = useCallback(async () => {
+    if (!user) {
+      setCloseFriendsCount(0);
+      return;
+    }
+
+    try {
+      const db = getDatabase();
+      const snapshot = await get(ref(db, `closeFriends/${user.uid}`));
+      if (!snapshot.exists()) {
+        setCloseFriendsCount(0);
+        return;
+      }
+      const closeFriends = snapshot.val() as Record<string, unknown>;
+      setCloseFriendsCount(Object.keys(closeFriends).length);
+    } catch (error) {
+      console.error("Error fetching close friends:", error);
+      setCloseFriendsCount(0);
+    }
+  }, [user]);
+
   useEffect(() => {
     fetchStories();
+    fetchCloseFriendsCount();
     // Cleanup expired stories every minute
     const interval = setInterval(cleanupExpiredStories, 60000);
     return () => clearInterval(interval);
-  }, [fetchStories, cleanupExpiredStories]);
+  }, [fetchStories, fetchCloseFriendsCount, cleanupExpiredStories]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -190,7 +252,10 @@ export function Stories() {
     setIsEditorOpen(true);
   };
 
-  const handleEditorSave = async (editedBlob: Blob) => {
+  const handleEditorSave = async (
+    editedBlob: Blob,
+    metadata?: { mentions?: string[] },
+  ) => {
     if (!user) return;
 
     setIsUploading(true);
@@ -220,17 +285,38 @@ export function Stories() {
           `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
         mediaUrl,
         mediaType: "image",
+        audience: storyAudience,
+        mentions: metadata?.mentions || [],
         createdAt: now,
         expiresAt,
       });
 
+      if (metadata?.mentions?.length && newStoryRef.key) {
+        await sendMentionNotifications({
+          actorUserId: user.uid,
+          actorUsername: user.displayName || user.email?.split("@")[0] || "user",
+          actorAvatar:
+            user.photoURL ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          text: metadata.mentions.map((username) => `@${username}`).join(" "),
+          sourceType: "story",
+          sourceId: newStoryRef.key,
+          storyId: newStoryRef.key,
+          usernames: metadata.mentions,
+        });
+      }
+
       setSelectedFile(null);
       setPreviewUrl(null);
+      setStoryAudience("public");
       fetchStories();
 
       toast({
         title: "Story Posted",
-        description: "Your story will be visible for 24 hours",
+        description:
+          storyAudience === "close_friends"
+            ? "Close friends story shared for 24 hours"
+            : "Your story will be visible for 24 hours",
       });
     } catch (error: unknown) {
       console.error("Error uploading story:", error);
@@ -248,10 +334,19 @@ export function Stories() {
     setIsEditorOpen(false);
     setSelectedFile(null);
     setPreviewUrl(null);
+    setStoryAudience("public");
   };
 
   const handleUploadStory = async () => {
     if (!user || !selectedFile) return;
+    if (storyAudience === "close_friends" && closeFriendsCount === 0) {
+      toast({
+        title: "No Close Friends Added",
+        description: "Add close friends in Settings > Privacy before sharing.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // For videos, upload directly without editing
     if (selectedFile.type.startsWith("video/")) {
@@ -277,6 +372,8 @@ export function Stories() {
             `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           mediaUrl,
           mediaType: "video",
+          audience: storyAudience,
+          mentions: [],
           createdAt: now,
           expiresAt,
         });
@@ -284,11 +381,15 @@ export function Stories() {
         setIsUploadDialogOpen(false);
         setSelectedFile(null);
         setPreviewUrl(null);
+        setStoryAudience("public");
         fetchStories();
 
         toast({
           title: "Story Posted",
-          description: "Your story will be visible for 24 hours",
+          description:
+            storyAudience === "close_friends"
+              ? "Close friends story shared for 24 hours"
+              : "Your story will be visible for 24 hours",
         });
       } catch (error: unknown) {
         console.error("Error uploading story:", error);
@@ -353,6 +454,8 @@ export function Stories() {
   const currentStory =
     currentStoryUser && stories[currentStoryUser]?.[currentStoryIndex];
   const hasOwnStory = user && stories[user.uid]?.length > 0;
+  const ownLatestStory =
+    hasOwnStory && user ? stories[user.uid][stories[user.uid].length - 1] : null;
 
   return (
     <>
@@ -370,7 +473,13 @@ export function Stories() {
                 }
               >
                 <div
-                  className={`${hasOwnStory ? "p-[2px] bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 rounded-full" : "p-[2px] bg-muted rounded-full"}`}
+                  className={`${
+                    hasOwnStory
+                      ? ownLatestStory?.audience === "close_friends"
+                        ? "p-[2px] bg-green-500 rounded-full"
+                        : "p-[2px] bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 rounded-full"
+                      : "p-[2px] bg-muted rounded-full"
+                  }`}
                 >
                   <div className="p-[3px] bg-background rounded-full relative">
                     <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
@@ -399,14 +508,20 @@ export function Stories() {
             {Object.entries(displayedStories)
               .filter(([userId]) => userId !== user?.uid)
               .map(([userId, userStories]) => {
-                const latestStory = userStories[0];
+                const latestStory = userStories[userStories.length - 1];
                 return (
                   <div
                     key={userId}
                     className="flex flex-col items-center gap-1 cursor-pointer group"
                     onClick={() => handleViewStory(userId)}
                   >
-                    <div className="p-[2px] bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 rounded-full">
+                    <div
+                      className={`p-[2px] rounded-full ${
+                        latestStory.audience === "close_friends"
+                          ? "bg-green-500"
+                          : "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500"
+                      }`}
+                    >
                       <div className="p-[3px] bg-background rounded-full">
                         <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
                           <AvatarImage
@@ -453,7 +568,17 @@ export function Stories() {
       </div>
 
       {/* Upload Story Dialog */}
-      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+      <Dialog
+        open={isUploadDialogOpen}
+        onOpenChange={(open) => {
+          setIsUploadDialogOpen(open);
+          if (!open) {
+            setSelectedFile(null);
+            setPreviewUrl(null);
+            setStoryAudience("public");
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create Story</DialogTitle>
@@ -462,6 +587,32 @@ export function Stories() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="rounded-lg border border-border p-3">
+              <p className="mb-2 text-sm font-medium">Story Audience</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={storyAudience === "public" ? "default" : "outline"}
+                  onClick={() => setStoryAudience("public")}
+                >
+                  Public
+                </Button>
+                <Button
+                  type="button"
+                  variant={
+                    storyAudience === "close_friends" ? "default" : "outline"
+                  }
+                  onClick={() => setStoryAudience("close_friends")}
+                >
+                  Close Friends
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {storyAudience === "close_friends"
+                  ? `Only your ${closeFriendsCount} close friend${closeFriendsCount === 1 ? "" : "s"} can view.`
+                  : "Visible to everyone who can view your stories."}
+              </p>
+            </div>
             {!selectedFile ? (
               <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
                 <Input
@@ -562,6 +713,11 @@ export function Stories() {
                 <span className="text-white font-semibold">
                   {currentStory.username}
                 </span>
+                {currentStory.audience === "close_friends" && (
+                  <span className="rounded-full bg-green-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                    Close Friends
+                  </span>
+                )}
                 <span className="text-white/70 text-sm ml-auto">
                   {Math.floor((Date.now() - currentStory.createdAt) / 3600000)}h
                   ago

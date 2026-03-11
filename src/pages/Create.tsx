@@ -19,6 +19,7 @@ import { getDatabase, ref, push, set, get } from "firebase/database";
 import { uploadToStorage } from "@/lib/storage";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { extractMentions } from "../utils/mentions";
+import { sendMentionNotifications } from "@/utils/mentionNotifications";
 
 type PostType = "image" | "reel";
 
@@ -244,6 +245,22 @@ export default function Create() {
         views: 0,
         createdAt: Date.now(),
       });
+
+      const mentionUsernames = extractMentions(caption);
+      if (mentionUsernames.length > 0 && newPostRef.key) {
+        await sendMentionNotifications({
+          actorUserId: user.uid,
+          actorUsername: user.displayName || user.email?.split("@")[0] || "user",
+          actorAvatar:
+            user.photoURL ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          text: caption,
+          sourceType: "post",
+          sourceId: newPostRef.key,
+          postId: newPostRef.key,
+          usernames: mentionUsernames,
+        });
+      }
 
       toast({
         title: "Posted Successfully!",

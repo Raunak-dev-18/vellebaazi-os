@@ -17,6 +17,12 @@ interface Notification {
   timestamp: string;
   read: boolean;
   status?: string;
+  message?: string;
+  sourceType?: "post" | "comment" | "story" | "group_message";
+  sourceId?: string;
+  groupId?: string;
+  postId?: string;
+  storyId?: string;
 }
 
 interface NotificationRecord {
@@ -27,6 +33,12 @@ interface NotificationRecord {
   timestamp: string;
   read: boolean;
   status?: string;
+  message?: string;
+  sourceType?: "post" | "comment" | "story" | "group_message";
+  sourceId?: string;
+  groupId?: string;
+  postId?: string;
+  storyId?: string;
 }
 
 export default function Notifications() {
@@ -46,6 +58,9 @@ export default function Notifications() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [followBackLoading, setFollowBackLoading] = useState<Set<string>>(
     new Set(),
+  );
+  const mentionNotifications = notifications.filter(
+    (notification) => notification.type === "mention",
   );
 
   useEffect(() => {
@@ -369,6 +384,39 @@ export default function Notifications() {
   const handleUserClick = (username: string) => {
     navigate(`/users/profile/${username}`);
   };
+
+  const handleMentionClick = (notification: Notification) => {
+    if (notification.type !== "mention") {
+      handleUserClick(notification.fromUsername);
+      return;
+    }
+
+    if (notification.sourceType === "group_message") {
+      navigate("/bakaiti");
+      return;
+    }
+
+    if (notification.sourceType === "story") {
+      navigate("/");
+      return;
+    }
+
+    handleUserClick(notification.fromUsername);
+  };
+
+  const getMentionSourceLabel = (notification: Notification) => {
+    switch (notification.sourceType) {
+      case "group_message":
+        return "group chat";
+      case "story":
+        return "story";
+      case "comment":
+        return "comment";
+      default:
+        return "post";
+    }
+  };
+
   return (
     <div className="min-h-screen max-w-2xl mx-auto">
       {/* Header */}
@@ -424,7 +472,7 @@ export default function Notifications() {
                   <div
                     key={notification.id}
                     className="flex items-center gap-3 p-4 hover:bg-secondary cursor-pointer transition-colors"
-                    onClick={() => handleUserClick(notification.fromUsername)}
+                    onClick={() => handleMentionClick(notification)}
                   >
                     <Avatar className="h-12 w-12">
                       <AvatarImage
@@ -450,6 +498,8 @@ export default function Notifications() {
                             "accepted your follow request."}
                           {notification.type === "follow_request_blocked" &&
                             "blocked you."}
+                          {notification.type === "mention" &&
+                            `mentioned you in a ${getMentionSourceLabel(notification)}.`}
                         </span>{" "}
                         <span className="text-muted-foreground text-xs">
                           {getTimeAgo(notification.timestamp)}
@@ -531,12 +581,64 @@ export default function Notifications() {
         </TabsContent>
 
         <TabsContent value="mentions" className="mt-0">
-          <div className="py-20 text-center text-muted-foreground">
-            <p>No mentions yet</p>
-            <p className="text-sm mt-2">
-              When someone mentions you, it will appear here
-            </p>
-          </div>
+          <ScrollArea className="h-[calc(100vh-180px)]">
+            {loading ? (
+              <div className="divide-y divide-border">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 p-4">
+                    <div className="h-12 w-12 rounded-full bg-muted animate-pulse" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 w-48 bg-muted animate-pulse rounded" />
+                      <div className="h-3 w-32 bg-muted animate-pulse rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : mentionNotifications.length === 0 ? (
+              <div className="py-20 text-center text-muted-foreground">
+                <p>No mentions yet</p>
+                <p className="text-sm mt-2">
+                  When someone mentions you, it will appear here
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {mentionNotifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    onClick={() => handleMentionClick(notification)}
+                    className="w-full text-left flex items-center gap-3 p-4 hover:bg-secondary transition-colors"
+                  >
+                    <Avatar className="h-12 w-12">
+                      <AvatarImage
+                        src={notification.fromAvatar}
+                        alt={notification.fromUsername}
+                      />
+                      <AvatarFallback>
+                        {notification.fromUsername[0].toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm">
+                        <span className="font-semibold">
+                          {notification.fromUsername}
+                        </span>{" "}
+                        mentioned you in a {getMentionSourceLabel(notification)}.
+                      </p>
+                      {notification.message && (
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          "{notification.message}"
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {getTimeAgo(notification.timestamp)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
         </TabsContent>
       </Tabs>
     </div>

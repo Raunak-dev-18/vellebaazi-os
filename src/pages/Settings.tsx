@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, User, Lock, Users, Camera } from "lucide-react";
+import { ArrowLeft, User, Lock, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,9 +8,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { getDatabase, ref, update, get, remove } from "firebase/database";
+import { getDatabase, ref, update, get, remove, set, push } from "firebase/database";
 import { updateProfile } from "firebase/auth";
 import { uploadToStorage } from "@/lib/storage";
+import { getBlockedUsers, unblockUser, type BlockedUser } from "@/utils/blocking";
+import { parseUsername } from "@/utils/validation";
 
 interface UserRecord {
   username?: string;
@@ -27,6 +29,12 @@ interface PostRecord {
 interface StoryRecord {
   userId: string;
   mediaUrl?: string;
+}
+
+interface CloseFriendUser {
+  uid: string;
+  username: string;
+  avatar: string;
 }
 
 export default function Settings() {
@@ -48,6 +56,18 @@ export default function Settings() {
   );
   const [isUploadingPic, setIsUploadingPic] = useState(false);
   const [isCleaningLegacy, setIsCleaningLegacy] = useState(false);
+  const [followingUsers, setFollowingUsers] = useState<CloseFriendUser[]>([]);
+  const [closeFriends, setCloseFriends] = useState<
+    Record<string, CloseFriendUser>
+  >({});
+  const [closeFriendSearch, setCloseFriendSearch] = useState("");
+  const [updatingCloseFriendId, setUpdatingCloseFriendId] = useState<
+    string | null
+  >(null);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
+  const [updatingBlockedUserId, setUpdatingBlockedUserId] = useState<
+    string | null
+  >(null);
 
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Something went wrong";
@@ -70,6 +90,55 @@ export default function Settings() {
         } else {
           setProfilePicture(user.photoURL || "");
         }
+
+        const [followingSnapshot, allUsersSnapshot, closeFriendsSnapshot, blocked] =
+          await Promise.all([
+            get(ref(db, `following/${user.uid}`)),
+            get(ref(db, "users")),
+            get(ref(db, `closeFriends/${user.uid}`)),
+            getBlockedUsers(user.uid),
+          ]);
+
+        const allUsers = allUsersSnapshot.exists()
+          ? (allUsersSnapshot.val() as Record<
+              string,
+              { username?: string; photoURL?: string } | undefined
+            >)
+          : {};
+
+        const followingList: CloseFriendUser[] = [];
+        if (followingSnapshot.exists()) {
+          const followingData = followingSnapshot.val() as Record<
+            string,
+            { username?: string }
+          >;
+          Object.keys(followingData).forEach((uid) => {
+            if (uid === user.uid) return;
+            const userData = allUsers[uid];
+            const localUsername =
+              userData?.username || followingData[uid]?.username || "user";
+            followingList.push({
+              uid,
+              username: localUsername,
+              avatar:
+                userData?.photoURL ||
+                `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+            });
+          });
+        }
+
+        followingList.sort((a, b) => a.username.localeCompare(b.username));
+        setFollowingUsers(followingList);
+
+        if (closeFriendsSnapshot.exists()) {
+          setCloseFriends(
+            closeFriendsSnapshot.val() as Record<string, CloseFriendUser>,
+          );
+        } else {
+          setCloseFriends({});
+        }
+
+        setBlockedUsers(blocked);
       } catch (error) {
         console.error("Error fetching settings:", error);
       } finally {
@@ -171,11 +240,11 @@ export default function Settings() {
 
   const handleSaveSettings = async () => {
     if (!user) return;
-
-    if (!username.trim()) {
+    const usernameValidation = parseUsername(username);
+    if (!usernameValidation.success) {
       toast({
         title: "Error",
-        description: "Username cannot be empty",
+        description: usernameValidation.error.issues[0]?.message || "Invalid username",
         variant: "destructive",
       });
       return;
@@ -184,6 +253,12 @@ export default function Settings() {
     setIsSaving(true);
     try {
       const db = getDatabase();
+      const nextUsername = usernameValidation.data;
+      const currentPrivacy = accountPrivacy;
+      const currentUserSnapshot = await get(ref(db, `users/${user.uid}`));
+      const previousPrivacy = currentUserSnapshot.exists()
+        ? ((currentUserSnapshot.val().accountPrivacy as string) || "public")
+        : "public";
 
       // Check if username is already taken by another user
       const usersRef = ref(db, "users");
@@ -193,7 +268,7 @@ export default function Settings() {
         const usersData = usersSnapshot.val() as Record<string, UserRecord>;
         const usernameTaken = Object.entries(usersData).some(
           ([uid, data]) =>
-            uid !== user.uid && data.username === username.trim(),
+            uid !== user.uid && data.username === nextUsername,
         );
 
         if (usernameTaken) {
@@ -210,16 +285,30 @@ export default function Settings() {
 
       // Update Firebase Auth profile
       await updateProfile(user, {
-        displayName: username.trim(),
+        displayName: nextUsername,
       });
 
       // Update database
       const userRef = ref(db, `users/${user.uid}`);
       await update(userRef, {
-        username: username.trim(),
+        username: nextUsername,
         gender: gender,
         accountPrivacy: accountPrivacy,
       });
+
+      if (previousPrivacy !== currentPrivacy) {
+        await set(push(ref(db, `notifications/${user.uid}`)), {
+          type: "privacy_update",
+          fromUserId: user.uid,
+          fromUsername: nextUsername,
+          fromAvatar:
+            user.photoURL ||
+            `https://api.dicebear.com/7.x/avataaars/svg?seed=${nextUsername}`,
+          timestamp: new Date().toISOString(),
+          read: false,
+          message: `Account privacy set to ${currentPrivacy}`,
+        });
+      }
 
       toast({
         title: "Settings Saved",
@@ -242,6 +331,68 @@ export default function Settings() {
   const isLegacyMediaUrl = (url?: string | null) => {
     if (!url) return false;
     return url.includes("supabase.co/storage");
+  };
+
+  const handleToggleCloseFriend = async (entry: CloseFriendUser) => {
+    if (!user) return;
+    if (updatingCloseFriendId) return;
+
+    const isAlreadyCloseFriend = Boolean(closeFriends[entry.uid]);
+    setUpdatingCloseFriendId(entry.uid);
+
+    try {
+      const db = getDatabase();
+      const closeFriendRef = ref(db, `closeFriends/${user.uid}/${entry.uid}`);
+
+      if (isAlreadyCloseFriend) {
+        await remove(closeFriendRef);
+        setCloseFriends((prev) => {
+          const next = { ...prev };
+          delete next[entry.uid];
+          return next;
+        });
+      } else {
+        await set(closeFriendRef, {
+          uid: entry.uid,
+          username: entry.username,
+          avatar: entry.avatar,
+          addedAt: Date.now(),
+        });
+        setCloseFriends((prev) => ({
+          ...prev,
+          [entry.uid]: entry,
+        }));
+      }
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingCloseFriendId(null);
+    }
+  };
+
+  const handleUnblockUser = async (blockedUserId: string) => {
+    if (!user || updatingBlockedUserId) return;
+    setUpdatingBlockedUserId(blockedUserId);
+    try {
+      await unblockUser(user.uid, blockedUserId);
+      setBlockedUsers((prev) => prev.filter((entry) => entry.uid !== blockedUserId));
+      toast({
+        title: "User Unblocked",
+        description: "They can interact with your profile again.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingBlockedUserId(null);
+    }
   };
 
   const handleCleanupLegacyMedia = async () => {
@@ -323,6 +474,11 @@ export default function Settings() {
       </div>
     );
   }
+
+  const filteredFollowingUsers = followingUsers.filter((entry) =>
+    entry.username.toLowerCase().includes(closeFriendSearch.toLowerCase()),
+  );
+  const closeFriendsCount = Object.keys(closeFriends).length;
 
   return (
     <div className="min-h-screen pb-20">
@@ -514,6 +670,119 @@ export default function Settings() {
                 </div>
               </div>
             </RadioGroup>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label>Close Friends</Label>
+              <span className="text-sm text-muted-foreground">
+                {closeFriendsCount} selected
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Close friends can view stories shared to your close friends
+              audience.
+            </p>
+            <Input
+              placeholder="Search people you follow"
+              value={closeFriendSearch}
+              onChange={(e) => setCloseFriendSearch(e.target.value)}
+            />
+            <div className="max-h-64 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+              {filteredFollowingUsers.length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground">
+                  {followingUsers.length === 0
+                    ? "Follow people to manage close friends."
+                    : "No matching users found."}
+                </div>
+              ) : (
+                filteredFollowingUsers.map((entry) => {
+                  const isCloseFriend = Boolean(closeFriends[entry.uid]);
+                  const isUpdating = updatingCloseFriendId === entry.uid;
+                  return (
+                    <div
+                      key={entry.uid}
+                      className="flex items-center justify-between gap-3 p-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar className="h-9 w-9">
+                          <AvatarImage src={entry.avatar} alt={entry.username} />
+                          <AvatarFallback>
+                            {entry.username.slice(0, 1).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="truncate text-sm font-medium">
+                          {entry.username}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={isCloseFriend ? "secondary" : "outline"}
+                        disabled={Boolean(updatingCloseFriendId)}
+                        onClick={() => handleToggleCloseFriend(entry)}
+                      >
+                        {isUpdating
+                          ? "Updating..."
+                          : isCloseFriend
+                            ? "Remove"
+                            : "Add"}
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label>Blocked Accounts</Label>
+              <span className="text-sm text-muted-foreground">
+                {blockedUsers.length} blocked
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Blocked users cannot follow you, message you, or view your profile content.
+            </p>
+            <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+              {blockedUsers.length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground">
+                  You have not blocked anyone.
+                </div>
+              ) : (
+                blockedUsers.map((entry) => (
+                  <div
+                    key={entry.uid}
+                    className="flex items-center justify-between gap-3 p-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="h-9 w-9">
+                        <AvatarImage src={entry.avatar} alt={entry.username} />
+                        <AvatarFallback>
+                          {entry.username.slice(0, 1).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{entry.username}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          Blocked {new Date(entry.blockedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={Boolean(updatingBlockedUserId)}
+                      onClick={() => handleUnblockUser(entry.uid)}
+                    >
+                      {updatingBlockedUserId === entry.uid ? "Updating..." : "Unblock"}
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 

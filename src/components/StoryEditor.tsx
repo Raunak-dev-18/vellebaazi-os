@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { MentionInput } from "@/components/MentionInput";
+import { extractMentions } from "@/utils/mentions";
 import {
   X, Type, Smile, Sticker, Palette, Pencil, Undo, Download,
   AlignLeft, AlignCenter, AlignRight, Bold, Italic, ChevronLeft, ChevronRight
@@ -81,7 +82,10 @@ interface DrawPath {
 interface StoryEditorProps {
   file: File;
   previewUrl: string;
-  onSave: (editedImageBlob: Blob) => void;
+  onSave: (
+    editedImageBlob: Blob,
+    metadata?: { mentions?: string[] },
+  ) => void;
   onCancel: () => void;
 }
 
@@ -464,9 +468,11 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
     });
 
     // Convert to blob
+    const storyText = textOverlays.map((overlay) => overlay.text).join(" ");
+    const mentions = extractMentions(storyText);
     canvas.toBlob((blob) => {
       if (blob) {
-        onSave(blob);
+        onSave(blob, { mentions });
       }
     }, "image/jpeg", 0.95);
   };

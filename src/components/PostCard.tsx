@@ -26,6 +26,7 @@ import { useNavigate } from "react-router-dom";
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { getSafeAvatarUrl } from "@/utils/media";
+import { sendMentionNotifications } from "@/utils/mentionNotifications";
 
 interface PostCardProps {
   id: string;
@@ -455,6 +456,10 @@ export function PostCard({
     try {
       const db = getDatabase();
       const commentText = comment.trim();
+      const actorUsername = user.displayName || user.email?.split("@")[0] || "user";
+      const actorAvatar =
+        user.photoURL ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`;
 
       if (replyingTo) {
         // This is a reply to a comment
@@ -466,16 +471,26 @@ export function PostCard({
 
         const newReply = {
           userId: user.uid,
-          username: user.displayName || user.email?.split("@")[0] || "user",
-          userAvatar:
-            user.photoURL ||
-            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          username: actorUsername,
+          userAvatar: actorAvatar,
           text: commentText,
           createdAt: Date.now(),
           replyTo: replyingTo.username,
         };
 
         await set(newReplyRef, newReply);
+
+        if (newReplyRef.key) {
+          await sendMentionNotifications({
+            actorUserId: user.uid,
+            actorUsername,
+            actorAvatar,
+            text: commentText,
+            sourceType: "comment",
+            sourceId: newReplyRef.key,
+            postId: id,
+          });
+        }
 
         // Expand replies for this comment
         setExpandedReplies((prev) => new Set(prev).add(replyingTo.commentId));
@@ -487,15 +502,25 @@ export function PostCard({
 
         const newComment = {
           userId: user.uid,
-          username: user.displayName || user.email?.split("@")[0] || "user",
-          userAvatar:
-            user.photoURL ||
-            `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+          username: actorUsername,
+          userAvatar: actorAvatar,
           text: commentText,
           createdAt: Date.now(),
         };
 
         await set(newCommentRef, newComment);
+
+        if (newCommentRef.key) {
+          await sendMentionNotifications({
+            actorUserId: user.uid,
+            actorUsername,
+            actorAvatar,
+            text: commentText,
+            sourceType: "comment",
+            sourceId: newCommentRef.key,
+            postId: id,
+          });
+        }
 
         const postRef = ref(db, `posts/${id}`);
         const postSnapshot = await get(postRef);
