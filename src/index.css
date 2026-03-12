@@ -8,6 +8,8 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
+    --app-font-scale: 1;
+    --app-fluid-root: clamp(14px, 0.2vw + 14px, 16px);
     --background: 0 0% 98%;
     --foreground: 222 47% 11%;
 
@@ -101,8 +103,22 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    font-size: calc(var(--app-fluid-root) * var(--app-font-scale));
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100dvh;
+    width: 100%;
+    overflow-x: hidden;
   }
 
   /* Disable right-click on images and videos */
@@ -122,5 +138,12 @@ All colors MUST be HSL.
     -moz-user-drag: none;
     -o-user-drag: none;
     user-drag: none;
+  }
+}
+
+
+@media (max-width: 640px) {
+  :root {
+    --app-fluid-root: clamp(14px, 0.5vw + 13px, 15px);
   }
 }

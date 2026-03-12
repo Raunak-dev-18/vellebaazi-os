@@ -26,6 +26,7 @@ const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Create = lazy(() => import("./pages/Create"));
+const StoryViewer = lazy(() => import("./pages/StoryViewer"));
 
 // Page loading component
 function PageLoader() {
@@ -95,15 +96,23 @@ function AppContent() {
         <Route path="/terms" element={<TermsOfService />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route
+          path="/story/:user_id/:story_id"
+          element={
+            <ProtectedRoute>
+              <StoryViewer />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/*"
           element={
             <ProtectedRoute>
               <SidebarProvider>
-                <div className="flex min-h-screen w-full bg-background">
+                <div className="flex min-h-screen w-full overflow-x-hidden bg-background">
                   <div className="hidden md:block">
                     <AppSidebar />
                   </div>
-                  <main className="relative flex min-h-screen flex-1 flex-col">
+                  <main className="relative flex min-h-screen flex-1 flex-col overflow-x-hidden">
                     <MobileTopBar />
                     <Suspense fallback={<PageLoader />}>
                       <div className="flex-1 pb-20 md:pb-0">
@@ -161,3 +170,5 @@ const App = () => {
 };
 
 export default App;
+
+

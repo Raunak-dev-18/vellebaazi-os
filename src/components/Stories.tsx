@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, X, ChevronLeft, ChevronRight, Heart, MessageCircle, Send, SmilePlus } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { getDatabase, ref, get, set, push, remove, onValue } from "firebase/database";
 import { uploadToStorage } from "@/lib/storage";
@@ -197,9 +198,20 @@ const normalizeStoryComment = (
   };
 };
 
-export function Stories() {
+interface StoriesProps {
+  viewerOnly?: boolean;
+  initialStoryUserId?: string;
+  initialStoryId?: string;
+}
+
+export function Stories({
+  viewerOnly = false,
+  initialStoryUserId,
+  initialStoryId,
+}: StoriesProps = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [stories, setStories] = useState<{ [userId: string]: Story[] }>({});
   const [displayedStories, setDisplayedStories] = useState<{
     [userId: string]: Story[];
@@ -462,6 +474,42 @@ export function Stories() {
     const interval = setInterval(cleanupExpiredStories, 60000);
     return () => clearInterval(interval);
   }, [fetchStories, fetchCloseFriendsCount, cleanupExpiredStories]);
+  useEffect(() => {
+    if (!viewerOnly || !initialStoryUserId || !initialStoryId) return;
+
+    const userStories = stories[initialStoryUserId];
+    if (!userStories?.length) return;
+
+    const targetIndex = userStories.findIndex((story) => story.id === initialStoryId);
+    if (targetIndex === -1) {
+      navigate(`/story/${initialStoryUserId}/${userStories[0].id}`, {
+        replace: true,
+      });
+      return;
+    }
+
+    setCurrentStoryUser(initialStoryUserId);
+    setCurrentStoryIndex(targetIndex);
+    setIsViewDialogOpen(true);
+  }, [
+    initialStoryId,
+    initialStoryUserId,
+    navigate,
+    stories,
+    
+  useEffect(() => {
+    if (!viewerOnly || !initialStoryUserId || !initialStoryId) return;
+    if (Object.keys(stories).length === 0) return;
+    if (!stories[initialStoryUserId]?.length) {
+      navigate("/", { replace: true });
+    }
+  }, [
+    initialStoryId,
+    initialStoryUserId,
+    navigate,
+    stories,
+    viewerOnly,
+  ]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -695,9 +743,9 @@ export function Stories() {
   };
 
   const handleViewStory = (userId: string) => {
-    setCurrentStoryUser(userId);
-    setCurrentStoryIndex(0);
-    setIsViewDialogOpen(true);
+    const firstStory = stories[userId]?.[0];
+    if (!firstStory) return;
+    navigate(`/story/${userId}/${firstStory.id}`);
   };
 
   const handleNextStory = useCallback(() => {
@@ -715,10 +763,14 @@ export function Stories() {
         setCurrentStoryUser(nextUserId);
         setCurrentStoryIndex(0);
       } else {
-        setIsViewDialogOpen(false);
+        if (viewerOnly) {
+          navigate("/");
+        } else {
+          setIsViewDialogOpen(false);
+        }
       }
     }
-  }, [currentStoryIndex, currentStoryUser, stories]);
+  }, [currentStoryIndex, currentStoryUser, navigate, stories, viewerOnly]);
 
   const handlePrevStory = useCallback(() => {
     if (!currentStoryUser) return;
@@ -735,7 +787,7 @@ export function Stories() {
         setCurrentStoryIndex(stories[prevUserId].length - 1);
       }
     }
-  }, [currentStoryIndex, currentStoryUser, stories]);
+  }, [currentStoryIndex, currentStoryUser, navigate, stories, viewerOnly]);
 
   const currentStory =
     currentStoryUser && stories[currentStoryUser]?.[currentStoryIndex];
@@ -743,9 +795,53 @@ export function Stories() {
   const ownLatestStory =
     hasOwnStory && user ? stories[user.uid][stories[user.uid].length - 1] : null;
   const currentStoryId = currentStory?.id || "";
+  const storyUserIds = Object.keys(stories);
+  const currentUserStories = currentStoryUser
+    ? stories[currentStoryUser] || []
+    : [];
+  const currentStoryUserOrder = currentStoryUser
+    ? storyUserIds.indexOf(currentStoryUser)
+    : -1;
+  const isAtFirstStory = currentStoryIndex === 0 && currentStoryUserOrder <= 0;
+  const isAtLastStory =
+    currentStoryIndex === currentUserStories.length - 1 &&
+    currentStoryUserOrder === storyUserIds.length - 1;
+  const isStoryViewerOpen = viewerOnly || isViewDialogOpen;
 
   useEffect(() => {
-    if (!isViewDialogOpen || !currentStory) {
+    if (!viewerOnly || !currentStory) return;
+    if (
+      currentStory.userId === initialStoryUserId &&
+      currentStory.id === initialStoryId
+    ) {
+      return;
+    }
+
+    navigate(`/story/${currentStory.userId}/${currentStory.id}`, {
+      replace: true,
+    });
+  }, [
+    currentStory,
+    initialStoryId,
+    initialStoryUserId,
+    navigate,
+    
+  useEffect(() => {
+    if (!viewerOnly || !initialStoryUserId || !initialStoryId) return;
+    if (Object.keys(stories).length === 0) return;
+    if (!stories[initialStoryUserId]?.length) {
+      navigate("/", { replace: true });
+    }
+  }, [
+    initialStoryId,
+    initialStoryUserId,
+    navigate,
+    stories,
+    viewerOnly,
+  ]);
+
+  useEffect(() => {
+    if (!isStoryViewerOpen || !currentStory) {
       setStoryProgress(0);
       return;
     }
@@ -766,10 +862,10 @@ export function Stories() {
     }, tickMs);
 
     return () => window.clearInterval(timer);
-  }, [currentStory, handleNextStory, isViewDialogOpen]);
+  }, [currentStory, handleNextStory, isStoryViewerOpen]);
 
   useEffect(() => {
-    if (!isViewDialogOpen || !currentStoryId) {
+    if (!isStoryViewerOpen || !currentStoryId) {
       setStoryReactionMap({});
       setStoryComments([]);
       setStoryCommentInput("");
@@ -816,7 +912,7 @@ export function Stories() {
       unsubReactions();
       unsubComments();
     };
-  }, [currentStoryId, isViewDialogOpen]);
+  }, [currentStoryId, isStoryViewerOpen]);
 
   const reactionSummary = useMemo(() => {
     const grouped = new Map<string, { count: number; mine: boolean }>();
@@ -1074,7 +1170,9 @@ export function Stories() {
 
   return (
     <>
-      <div className="border-b border-border bg-card">
+      {!viewerOnly && (
+        <>
+          <div className="border-b border-border bg-card">
         <ScrollArea className="w-full whitespace-nowrap">
           <div className="flex gap-4 p-4">
             {/* Your Story */}
@@ -1110,14 +1208,16 @@ export function Stories() {
                       <div className="absolute bottom-0 right-0 bg-blue-500 rounded-full p-1">
                         <Plus className="h-3 w-3 text-white" />
                       </div>
-                    )}
+            </>
+          )}
                   </div>
                 </div>
                 <span className="text-xs max-w-[70px] truncate text-foreground">
                   Your story
                 </span>
               </div>
-            )}
+            </>
+          )}
 
             {/* Other Users' Stories */}
             {Object.entries(displayedStories)
@@ -1176,7 +1276,8 @@ export function Stories() {
                 </div>
                 <span className="text-xs text-muted-foreground">Load more</span>
               </div>
-            )}
+            </>
+          )}
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
@@ -1289,15 +1390,25 @@ export function Stories() {
                   </Button>
                 </div>
               </div>
-            )}
+            </>
+          )}
           </div>
         </DialogContent>
       </Dialog>
+        </>
+      )}
 
       {/* View Story Dialog */}
       <Dialog
-        open={isViewDialogOpen}
+        open={viewerOnly ? true : isViewDialogOpen}
         onOpenChange={(open) => {
+          if (viewerOnly) {
+            if (!open) {
+              navigate("/");
+            }
+            return;
+          }
+
           setIsViewDialogOpen(open);
           if (!open) {
             setIsCommentsOpen(false);
@@ -1306,9 +1417,40 @@ export function Stories() {
           }
         }}
       >
-        <DialogContent className="border-0 bg-transparent p-0 shadow-none sm:max-w-[420px]">
+        <DialogContent
+          className={
+            viewerOnly
+              ? "relative flex h-screen w-screen items-center justify-center border-0 bg-black/80 p-2 shadow-none sm:max-w-none sm:p-4"
+              : "border-0 bg-transparent p-0 shadow-none sm:max-w-[420px]"
+          }
+        >
           {currentStory && (
-            <div className="relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black">
+            <>
+              {viewerOnly && (
+                <div className="pointer-events-none absolute inset-0">
+                  {currentStory.mediaType === "video" ? (
+                    <video
+                      key={`${currentStory.id}-bg`}
+                      src={currentStory.mediaUrl}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="h-full w-full scale-110 object-cover opacity-35 blur-3xl"
+                    />
+                  ) : (
+                    <img
+                      src={currentStory.mediaUrl}
+                      alt="Story background"
+                      className="h-full w-full scale-110 object-cover opacity-35 blur-3xl"
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-black/55" />
+                </div>
+            </>
+          )}
+
+              <div className="relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black">
               <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/75 via-black/30 to-transparent" />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
 
@@ -1386,10 +1528,7 @@ export function Stories() {
               <button
                 onClick={handlePrevStory}
                 className="absolute inset-y-0 left-0 z-20 w-1/2"
-                disabled={
-                  currentStoryIndex === 0 &&
-                  Object.keys(stories).indexOf(currentStoryUser!) === 0
-                }
+                disabled={isAtFirstStory}
                 aria-label="Previous story"
               >
                 <span className="sr-only">Previous story</span>
@@ -1397,17 +1536,30 @@ export function Stories() {
               <button
                 onClick={handleNextStory}
                 className="absolute inset-y-0 right-0 z-20 w-1/2"
+                disabled={isAtLastStory}
                 aria-label="Next story"
               >
                 <span className="sr-only">Next story</span>
               </button>
 
-              <div className="pointer-events-none absolute inset-y-0 left-2 z-20 flex items-center">
-                <ChevronLeft className="h-5 w-5 text-white/65" />
-              </div>
-              <div className="pointer-events-none absolute inset-y-0 right-2 z-20 flex items-center">
-                <ChevronRight className="h-5 w-5 text-white/65" />
-              </div>
+              <button
+                type="button"
+                onClick={handlePrevStory}
+                className="absolute left-3 top-1/2 z-30 -translate-y-1/2 rounded-full bg-black/45 p-2 text-white transition hover:bg-black/65 disabled:opacity-35"
+                disabled={isAtFirstStory}
+                aria-label="Previous story button"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleNextStory}
+                className="absolute right-3 top-1/2 z-30 -translate-y-1/2 rounded-full bg-black/45 p-2 text-white transition hover:bg-black/65 disabled:opacity-35"
+                disabled={isAtLastStory}
+                aria-label="Next story button"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
 
               <div className="absolute inset-x-3 bottom-3 z-30" onClick={(e) => e.stopPropagation()}>
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1507,6 +1659,7 @@ export function Stories() {
                 )}
               </div>
             </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -1552,7 +1705,8 @@ export function Stories() {
                   </div>
                 ))}
               </div>
-            )}
+            </>
+          )}
           </ScrollArea>
 
           <div className="flex items-center gap-2">
@@ -1578,7 +1732,7 @@ export function Stories() {
       </Dialog>
 
       {/* Story Editor */}
-      {isEditorOpen && selectedFile && previewUrl && (
+      {!viewerOnly && isEditorOpen && selectedFile && previewUrl && (
         <StoryEditor
           file={selectedFile}
           previewUrl={previewUrl}
@@ -1589,6 +1743,38 @@ export function Stories() {
     </>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

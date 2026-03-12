@@ -427,18 +427,37 @@ export default function Notifications() {
   };
 
   const handleMentionClick = (notification: Notification) => {
-    if (notification.type !== "mention") {
-      handleUserClick(notification.fromUsername);
-      return;
-    }
-
     if (notification.sourceType === "group_message") {
       navigate("/bakaiti");
       return;
     }
 
-    if (notification.sourceType === "story") {
-      navigate("/");
+    const isStoryNotification =
+      notification.sourceType === "story" ||
+      notification.type === "story_reaction" ||
+      notification.type === "story_comment" ||
+      notification.type === "story_reply";
+
+    if (isStoryNotification) {
+      const storyId = notification.storyId || notification.sourceId;
+      if (!storyId) {
+        navigate("/");
+        return;
+      }
+
+      const storyOwnerId =
+        notification.type === "story_reaction" ||
+        notification.type === "story_comment" ||
+        notification.type === "story_reply"
+          ? user?.uid
+          : notification.fromUserId;
+
+      if (!storyOwnerId) {
+        navigate("/");
+        return;
+      }
+
+      navigate(`/story/${storyOwnerId}/${storyId}`);
       return;
     }
 
@@ -693,4 +712,5 @@ export default function Notifications() {
     </div>
   );
 }
+
 

@@ -5,6 +5,13 @@ import "./index.css";
 const RUNTIME_RECOVERY_FLAG = "__vb_runtime_recovered_once";
 const PRELOAD_RECOVERY_FLAG = "__vb_preload_recovered_once";
 const SERVICE_WORKER_URL = "/sw.js?v=20260311-3";
+const TEXT_SCALE_STORAGE_KEY = "vb_font_scale";
+const TEXT_SCALE_MAP: Record<string, number> = {
+  compact: 0.94,
+  default: 1,
+  large: 1.08,
+  xlarge: 1.16,
+};
 
 const clearServiceWorkersAndCaches = async () => {
   if ("serviceWorker" in navigator) {
@@ -45,6 +52,14 @@ const maybeRecoverFromRuntimeMismatch = async (error: unknown) => {
   await clearServiceWorkersAndCaches();
   window.location.reload();
   return true;
+};
+
+const applyPreferredTextScale = () => {
+  if (typeof document === "undefined") return;
+
+  const stored = localStorage.getItem(TEXT_SCALE_STORAGE_KEY) || "default";
+  const scale = TEXT_SCALE_MAP[stored] ?? TEXT_SCALE_MAP.default;
+  document.documentElement.style.setProperty("--app-font-scale", String(scale));
 };
 
 const mountApp = () => {
@@ -90,6 +105,7 @@ const registerRuntimeErrorRecovery = () => {
 };
 
 const bootstrap = async () => {
+  applyPreferredTextScale();
   registerPreloadErrorRecovery();
   registerRuntimeErrorRecovery();
 

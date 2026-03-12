@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, User, Lock, Camera } from "lucide-react";
+import { ArrowLeft, User, Lock, Camera, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ interface UserRecord {
   photoURL?: string;
   accountPrivacy?: string;
   gender?: string;
+  displayTextScale?: string;
 }
 
 interface PostRecord {
@@ -37,6 +38,29 @@ interface CloseFriendUser {
   avatar: string;
 }
 
+const TEXT_SCALE_STORAGE_KEY = "vb_font_scale";
+const TEXT_SCALE_VALUES = {
+  compact: 0.94,
+  default: 1,
+  large: 1.08,
+  xlarge: 1.16,
+} as const;
+
+type TextScaleOption = keyof typeof TEXT_SCALE_VALUES;
+
+const normalizeTextScale = (value: unknown): TextScaleOption =>
+  typeof value === "string" && value in TEXT_SCALE_VALUES
+    ? (value as TextScaleOption)
+    : "default";
+
+const applyTextScale = (scale: TextScaleOption) => {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    "--app-font-scale",
+    String(TEXT_SCALE_VALUES[scale]),
+  );
+};
+
 export default function Settings() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -45,6 +69,7 @@ export default function Settings() {
   const [username, setUsername] = useState("");
   const [gender, setGender] = useState("prefer-not-to-say");
   const [accountPrivacy, setAccountPrivacy] = useState("public");
+  const [textScale, setTextScale] = useState<TextScaleOption>("default");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profilePicture, setProfilePicture] = useState("");
@@ -82,13 +107,25 @@ export default function Settings() {
         const snapshot = await get(userRef);
 
         if (snapshot.exists()) {
-          const userData = snapshot.val();
+          const userData = snapshot.val() as UserRecord;
           setUsername(userData.username || user.displayName || "");
           setGender(userData.gender || "prefer-not-to-say");
           setAccountPrivacy(userData.accountPrivacy || "public");
           setProfilePicture(userData.photoURL || user.photoURL || "");
+
+          const preferredScale = normalizeTextScale(
+            userData.displayTextScale || localStorage.getItem(TEXT_SCALE_STORAGE_KEY),
+          );
+          setTextScale(preferredScale);
+          applyTextScale(preferredScale);
+          localStorage.setItem(TEXT_SCALE_STORAGE_KEY, preferredScale);
         } else {
           setProfilePicture(user.photoURL || "");
+          const preferredScale = normalizeTextScale(
+            localStorage.getItem(TEXT_SCALE_STORAGE_KEY),
+          );
+          setTextScale(preferredScale);
+          applyTextScale(preferredScale);
         }
 
         const [followingSnapshot, allUsersSnapshot, closeFriendsSnapshot, blocked] =
@@ -294,7 +331,11 @@ export default function Settings() {
         username: nextUsername,
         gender: gender,
         accountPrivacy: accountPrivacy,
+        displayTextScale: textScale,
       });
+
+      localStorage.setItem(TEXT_SCALE_STORAGE_KEY, textScale);
+      applyTextScale(textScale);
 
       if (previousPrivacy !== currentPrivacy) {
         await set(push(ref(db, `notifications/${user.uid}`)), {
@@ -481,9 +522,9 @@ export default function Settings() {
   const closeFriendsCount = Object.keys(closeFriends).length;
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="min-h-screen overflow-x-hidden pb-20">
       {/* Header */}
-      <div className="border-b border-border p-4 flex items-center gap-4">
+      <div className="flex items-center gap-3 border-b border-border px-3 py-3 sm:gap-4 sm:p-4">
         <Button
           variant="ghost"
           size="icon"
@@ -491,10 +532,10 @@ export default function Settings() {
         >
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="text-xl font-semibold">Settings</h1>
+        <h1 className="text-lg font-semibold sm:text-xl">Settings</h1>
       </div>
 
-      <div className="max-w-2xl mx-auto p-6 space-y-8">
+      <div className="mx-auto max-w-2xl space-y-8 px-4 py-5 sm:p-6">
         {/* Account Settings */}
         <div className="space-y-6">
           <div className="flex items-center gap-3">
@@ -505,7 +546,7 @@ export default function Settings() {
           {/* Profile Picture */}
           <div className="space-y-4">
             <Label>Profile Picture</Label>
-            <div className="flex items-center gap-6">
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-6">
               <Avatar className="h-24 w-24 border-2 border-border">
                 <AvatarImage
                   src={
@@ -818,7 +859,7 @@ export default function Settings() {
           <Button
             onClick={handleSaveSettings}
             disabled={isSaving}
-            className="w-full max-w-md"
+            className="w-full sm:max-w-md"
           >
             {isSaving ? "Saving..." : "Save Changes"}
           </Button>

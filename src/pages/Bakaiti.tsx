@@ -79,6 +79,11 @@ interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: string;
+  clientNonce?: string;
+  conversationKey?: string;
+  localStatus?: "sending" | "sent" | "failed";
+  localError?: string;
+  localOnly?: boolean;
   encryptedText?: string;
   encryptedIv?: string;
   encryption?: string;
@@ -257,6 +262,9 @@ export default function Bakaiti() {
   const [messageText, setMessageText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedGif, setSelectedGif] = useState<GifPick | null>(null);
+  const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
+  const [activeSends, setActiveSends] = useState(0);
+  const [composerState, setComposerState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
   const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
@@ -264,7 +272,6 @@ export default function Bakaiti() {
   const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
   const [forwardingConversationKey, setForwardingConversationKey] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -288,6 +295,7 @@ export default function Bakaiti() {
 
   const [fullImage, setFullImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   const selectedConversation =
@@ -307,6 +315,33 @@ export default function Bakaiti() {
 
   const filteredUsers = users.filter((u) =>
     u.username.toLowerCase().includes(groupSearch.toLowerCase().trim()),
+  );
+
+  const selectedOptimisticMessages = useMemo(() => {
+    if (!selectedConversation) return [] as ChatMessage[];
+    const serverNonces = new Set(
+      messages
+        .map((entry) => entry.clientNonce)
+        .filter((nonce): nonce is string => Boolean(nonce)),
+    );
+
+    return optimisticMessages
+      .filter((entry) => entry.localOnly)
+      .filter((entry) => entry.conversationKey === selectedConversation.key)
+      .filter(
+        (entry) =>
+          entry.localStatus === "failed" ||
+          !entry.clientNonce ||
+          !serverNonces.has(entry.clientNonce),
+      );
+  }, [messages, optimisticMessages, selectedConversation]);
+
+  const displayedMessages = useMemo(
+    () =>
+      [...messages, ...selectedOptimisticMessages].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      ),
+    [messages, selectedOptimisticMessages],
   );
 
   const availableGroupCandidates = useMemo(() => {
@@ -331,8 +366,8 @@ export default function Bakaiti() {
   }, [conversations, search]);
 
   const reactionTargetMessage = useMemo(
-    () => messages.find((entry) => entry.id === reactionTargetId) || null,
-    [messages, reactionTargetId],
+    () => displayedMessages.find((entry) => entry.id === reactionTargetId) || null,
+    [displayedMessages, reactionTargetId],
   );
 
   const filteredForwardConversations = useMemo(() => {
@@ -367,7 +402,34 @@ export default function Bakaiti() {
     setForwardTarget(null);
     setForwardSearch("");
     setE2eeRuntimeDisabled(false);
+    setTimeout(() => messageInputRef.current?.focus(), 0);
   }, [selectedKey]);
+
+  useEffect(() => {
+    if (!messages.length) return;
+    const serverNonces = new Set(
+      messages
+        .map((entry) => entry.clientNonce)
+        .filter((nonce): nonce is string => Boolean(nonce)),
+    );
+    if (!serverNonces.size) return;
+    setOptimisticMessages((prev) =>
+      prev.filter(
+        (entry) =>
+          entry.localStatus === "failed" ||
+          !entry.clientNonce ||
+          !serverNonces.has(entry.clientNonce),
+      ),
+    );
+  }, [messages]);
+
+  useEffect(() => {
+    if (composerState !== "done" && composerState !== "error") return;
+    const timer = setTimeout(() => {
+      setComposerState(activeSends > 0 ? "sending" : "idle");
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [activeSends, composerState]);
 
   const resolveConversationParticipants = useCallback(
     async (conversation: Conversation) => {
@@ -553,6 +615,7 @@ export default function Bakaiti() {
           senderName: (v.senderName as string) || "System",
           text: (v.text as string) || "",
           timestamp: (v.timestamp as string) || "",
+          clientNonce: v.clientNonce as string | undefined,
           encryptedText: v.encryptedText as string | undefined,
           encryptedIv: v.encryptedIv as string | undefined,
           encryption: v.encryption as string | undefined,
@@ -671,7 +734,7 @@ export default function Bakaiti() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [displayedMessages]);
 
   useEffect(() => {
     const open = location.state?.openChatWith;
@@ -1265,6 +1328,7 @@ export default function Bakaiti() {
 
   const sendMessage = async () => {
     if (!user || !selectedConversation) return;
+
     const text = messageText.trim();
     const textValidation = parseChatMessage(text);
     if (!textValidation.success) {
@@ -1276,245 +1340,320 @@ export default function Bakaiti() {
       return;
     }
 
-    if (!textValidation.data && !selectedFile && !selectedGif) return;
-    if (sending) return;
-    setSending(true);
-    try {
-      if (
-        selectedConversation.type === "dm" &&
-        selectedConversation.otherUserId &&
-        (blockedByMe.has(selectedConversation.otherUserId) ||
-          blockedMe.has(selectedConversation.otherUserId))
-      ) {
-        toast({
-          title: "Action blocked",
-          description: "You cannot send messages in this conversation.",
-          variant: "destructive",
-        });
-        return;
-      }
+    const validatedText = textValidation.data;
+    const draftConversation = selectedConversation;
+    const draftFile = selectedFile;
+    const draftGif = selectedGif;
+    const draftReply = replyTarget;
+    const draftConversationKey = conversationKey;
+    const draftE2eeActive = e2eeActive;
 
-      if (selectedConversation.type === "group") {
-        try {
-          const selfMember = await get(
-            ref(db, `groupMembers/${selectedConversation.id}/${user.uid}`),
-          );
-          if (selfMember.exists()) {
-            // Keep going.
-          } else {
-            await remove(ref(db, `userGroups/${user.uid}/${selectedConversation.id}`)).catch(
-              () => undefined,
-            );
-            setSelectedKey(null);
-            toast({
-              title: "Group unavailable",
-              description: "You are no longer a member of this group.",
-              variant: "destructive",
-            });
-            return;
-          }
-        } catch {
-          await remove(ref(db, `userGroups/${user.uid}/${selectedConversation.id}`)).catch(
-            () => undefined,
-          );
-          setSelectedKey(null);
-          toast({
-            title: "Group unavailable",
-            description: "Group membership is invalid. Refreshing your inbox.",
-            variant: "destructive",
-          });
-          return;
-        }
-      }
+    if (!validatedText && !draftFile && !draftGif) return;
 
-      if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
-        await ensureDmChatMappings(selectedConversation);
-      }
-
-      const now = new Date().toISOString();
-      let fileUrl = "";
-      let fileName = "";
-      let fileType = "";
-      if (selectedFile) {
-        const ext = selectedFile.name.split(".").pop() || "file";
-        fileUrl = await uploadToChatStorage(
-          selectedFile,
-          `${selectedConversation.id}/${Date.now()}_${user.uid}.${ext}`,
-        );
-        fileName = selectedFile.name;
-        fileType = selectedFile.type;
-      } else if (selectedGif) {
-        fileUrl = selectedGif.url;
-        fileName = selectedGif.title || "GIF";
-        fileType = "image/gif";
-      }
-
-      let finalText = textValidation.data;
-      let encryptedText: string | undefined;
-      let encryptedIv: string | undefined;
-      let encryption: string | undefined;
-
-      let activeKey = conversationKey;
-      if (!activeKey && finalText && e2eeActive) {
-        try {
-          const participants = await resolveConversationParticipants(selectedConversation);
-          activeKey = await ensureConversationKey({
-            scope: selectedConversation.type,
-            conversationId: selectedConversation.id,
-            participantIds: participants,
-            currentUserId: user.uid,
-          });
-          setConversationKey(activeKey);
-          if (activeKey) {
-            setE2eeRuntimeDisabled(false);
-          }
-        } catch (error) {
-          console.error("E2EE setup failed during send; falling back to standard message.", error);
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.toLowerCase().includes("permission denied")) {
-            setE2eeRuntimeDisabled(true);
-          }
-        }
-      }
-
-      if (activeKey && finalText && e2eeActive) {
-        const encryptedPayload = await encryptTextWithKey(finalText, activeKey);
-        encryptedText = encryptedPayload.ciphertext;
-        encryptedIv = encryptedPayload.iv;
-        encryption = "e2ee_v1";
-        finalText = "";
-      }
-
-      const msg: Record<string, unknown> = {
-        senderId: user.uid,
-        senderName: username,
-        text: finalText || (selectedFile ? "Sent an attachment" : ""),
-        timestamp: now,
-        ...(encryptedText ? { encryptedText } : {}),
-        ...(encryptedIv ? { encryptedIv } : {}),
-        ...(encryption ? { encryption } : {}),
-        ...(fileUrl ? { fileUrl } : {}),
-        ...(fileName ? { fileName } : {}),
-        ...(fileType ? { fileType } : {}),
-        ...(replyTarget
-          ? {
-              replyTo: {
-                messageId: replyTarget.id,
-                senderId: replyTarget.senderId,
-                senderName: replyTarget.senderName,
-                text: replyTarget.text || "",
-                ...(replyTarget.fileName ? { fileName: replyTarget.fileName } : {}),
-                ...(replyTarget.fileType ? { fileType: replyTarget.fileType } : {}),
-                ...(replyTarget.sharedPost
-                  ? {
-                      sharedPost: {
-                        caption: replyTarget.sharedPost.caption || "",
-                        mediaType: replyTarget.sharedPost.mediaType,
-                      },
-                    }
-                  : {}),
-              },
-            }
-          : {}),
-      };
-
-      const path =
-        selectedConversation.type === "group"
-          ? `groupMessages/${selectedConversation.id}`
-          : `messages/${selectedConversation.id}`;
-      await set(push(ref(db, path)), msg);
-
-      const preview =
-        textValidation.data ||
-        (selectedGif
-          ? "GIF"
-          : selectedFile
-            ? `Attachment: ${selectedFile.name}`
-            : "");
-      if (selectedConversation.type === "dm" && selectedConversation.otherUserId) {
-        const selfPayload = {
-          otherUserId: selectedConversation.otherUserId,
-          otherUsername: selectedConversation.title,
-          otherUserAvatar: selectedConversation.avatar,
-          lastMessage: preview,
-          lastMessageTime: now,
-        };
-        const peerPayload = {
-          otherUserId: user.uid,
-          otherUsername: username,
-          otherUserAvatar: selfAvatar,
-          lastMessage: preview,
-          lastMessageTime: now,
-        };
-        await set(ref(db, `userChats/${user.uid}/${selectedConversation.id}`), selfPayload);
-        await set(
-          ref(
-            db,
-            `userChats/${selectedConversation.otherUserId}/${selectedConversation.id}`,
-          ),
-          peerPayload,
-        ).catch((error) => {
-          console.error("Peer chat metadata update failed:", error);
-        });
-      } else if (selectedConversation.type === "group") {
-        try {
-          await update(ref(db, `groups/${selectedConversation.id}`), { updatedAt: now });
-          const members = await get(ref(db, `groupMembers/${selectedConversation.id}`));
-          if (members.exists()) {
-            const m = members.val() as Record<string, Record<string, unknown>>;
-            await Promise.all(
-              Object.entries(m).map(([uid, info]) =>
-                update(ref(db, `userGroups/${uid}/${selectedConversation.id}`), {
-                  name: selectedConversation.title,
-                  role: (info.role as Role) || "member",
-                  updatedAt: now,
-                  lastMessage: preview,
-                }),
-              ),
-            );
-
-            const usernamesInMessage = extractMentions(textValidation.data);
-            if (usernamesInMessage.length > 0) {
-              await sendMentionNotifications({
-                actorUserId: user.uid,
-                actorUsername: username,
-                actorAvatar: selfAvatar,
-                text: textValidation.data,
-                sourceType: "group_message",
-                sourceId: selectedConversation.id,
-                groupId: selectedConversation.id,
-                chatId: selectedConversation.id,
-                usernames: usernamesInMessage,
-                knownUsers: Object.entries(m).map(([uid, info]) => ({
-                  uid,
-                  username: (info.username as string) || "",
-                })),
-              });
-            }
-          }
-        } catch (groupUpdateError) {
-          console.error("Group metadata update failed after sending message:", groupUpdateError);
-        }
-      }
-
-      setMessageText("");
-      setSelectedFile(null);
-      setSelectedGif(null);
-      setReplyTarget(null);
-      setShowGifPicker(false);
-    } catch (error) {
-      console.error(error);
-      const message = error instanceof Error ? error.message : "Permission denied";
+    if (
+      draftConversation.type === "dm" &&
+      draftConversation.otherUserId &&
+      (blockedByMe.has(draftConversation.otherUserId) ||
+        blockedMe.has(draftConversation.otherUserId))
+    ) {
       toast({
-        title: "Error",
-        description: `Failed to send message (${message})`,
+        title: "Action blocked",
+        description: "You cannot send messages in this conversation.",
         variant: "destructive",
       });
-    } finally {
-      setSending(false);
+      return;
     }
-  };
 
+    const now = new Date().toISOString();
+    const clientNonce = `${user.uid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticId = `local:${clientNonce}`;
+
+    const optimisticMessage: ChatMessage = {
+      id: optimisticId,
+      senderId: user.uid,
+      senderName: username,
+      text:
+        validatedText ||
+        (draftGif
+          ? draftGif.title
+            ? `GIF: ${draftGif.title}`
+            : "GIF"
+          : draftFile
+            ? "Sending attachment..."
+            : ""),
+      timestamp: now,
+      clientNonce,
+      conversationKey: draftConversation.key,
+      localOnly: true,
+      localStatus: "sending",
+      ...(draftGif
+        ? {
+            fileUrl: draftGif.url,
+            fileName: draftGif.title || "GIF",
+            fileType: "image/gif",
+          }
+        : {}),
+      ...(draftFile
+        ? {
+            fileName: draftFile.name,
+            fileType: draftFile.type || "application/octet-stream",
+          }
+        : {}),
+      ...(draftReply
+        ? {
+            replyTo: {
+              messageId: draftReply.id,
+              senderId: draftReply.senderId,
+              senderName: draftReply.senderName,
+              text: draftReply.text || "",
+              ...(draftReply.fileName ? { fileName: draftReply.fileName } : {}),
+              ...(draftReply.fileType ? { fileType: draftReply.fileType } : {}),
+              ...(draftReply.sharedPost
+                ? {
+                    sharedPost: {
+                      caption: draftReply.sharedPost.caption || "",
+                      mediaType: draftReply.sharedPost.mediaType,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    };
+
+    setOptimisticMessages((prev) => [...prev, optimisticMessage]);
+    setActiveSends((prev) => prev + 1);
+    setComposerState("sending");
+    setConversations((prev) =>
+      prev.map((entry) =>
+        entry.key === draftConversation.key
+          ? {
+              ...entry,
+              lastMessage:
+                validatedText ||
+                (draftGif
+                  ? "GIF"
+                  : draftFile
+                    ? "Attachment: " + draftFile.name
+                    : entry.lastMessage),
+              lastMessageTime: now,
+            }
+          : entry,
+      ),
+    );
+
+    setMessageText("");
+    setSelectedFile(null);
+    setSelectedGif(null);
+    setReplyTarget(null);
+    setShowGifPicker(false);
+    setTimeout(() => messageInputRef.current?.focus(), 0);
+
+    void (async () => {
+      try {
+        if (draftConversation.type === "group") {
+          try {
+            const selfMember = await get(
+              ref(db, `groupMembers/${draftConversation.id}/${user.uid}`),
+            );
+            if (!selfMember.exists()) {
+              await remove(ref(db, `userGroups/${user.uid}/${draftConversation.id}`)).catch(
+                () => undefined,
+              );
+              if (selectedKey === draftConversation.key) {
+                setSelectedKey(null);
+              }
+              throw new Error("You are no longer a member of this group.");
+            }
+          } catch (error) {
+            if (error instanceof Error && error.message.includes("no longer a member")) {
+              throw error;
+            }
+            await remove(ref(db, `userGroups/${user.uid}/${draftConversation.id}`)).catch(
+              () => undefined,
+            );
+            if (selectedKey === draftConversation.key) {
+              setSelectedKey(null);
+            }
+            throw new Error("Group membership is invalid.");
+          }
+        }
+
+        if (draftConversation.type === "dm" && draftConversation.otherUserId) {
+          await ensureDmChatMappings(draftConversation);
+        }
+
+        let fileUrl = "";
+        let fileName = "";
+        let fileType = "";
+
+        if (draftFile) {
+          const ext = draftFile.name.split(".").pop() || "file";
+          fileUrl = await uploadToChatStorage(
+            draftFile,
+            `${draftConversation.id}/${Date.now()}_${user.uid}.${ext}`,
+          );
+          fileName = draftFile.name;
+          fileType = draftFile.type;
+        } else if (draftGif) {
+          fileUrl = draftGif.url;
+          fileName = draftGif.title || "GIF";
+          fileType = "image/gif";
+        }
+
+        let finalText = validatedText;
+        let encryptedText: string | undefined;
+        let encryptedIv: string | undefined;
+        let encryption: string | undefined;
+
+        let activeKey = draftConversationKey;
+        if (!activeKey && finalText && draftE2eeActive) {
+          try {
+            const participants = await resolveConversationParticipants(draftConversation);
+            activeKey = await ensureConversationKey({
+              scope: draftConversation.type,
+              conversationId: draftConversation.id,
+              participantIds: participants,
+              currentUserId: user.uid,
+            });
+            setConversationKey(activeKey);
+            if (activeKey) {
+              setE2eeRuntimeDisabled(false);
+            }
+          } catch (error) {
+            console.error("E2EE setup failed during send; falling back to standard message.", error);
+            const setupMessage = error instanceof Error ? error.message : String(error);
+            if (setupMessage.toLowerCase().includes("permission denied")) {
+              setE2eeRuntimeDisabled(true);
+            }
+          }
+        }
+
+        if (activeKey && finalText && draftE2eeActive) {
+          const encryptedPayload = await encryptTextWithKey(finalText, activeKey);
+          encryptedText = encryptedPayload.ciphertext;
+          encryptedIv = encryptedPayload.iv;
+          encryption = "e2ee_v1";
+          finalText = "";
+        }
+
+        const messagePayload: Record<string, unknown> = {
+          senderId: user.uid,
+          senderName: username,
+          text: finalText || (draftFile ? "Sent an attachment" : ""),
+          timestamp: now,
+          clientNonce,
+          ...(encryptedText ? { encryptedText } : {}),
+          ...(encryptedIv ? { encryptedIv } : {}),
+          ...(encryption ? { encryption } : {}),
+          ...(fileUrl ? { fileUrl } : {}),
+          ...(fileName ? { fileName } : {}),
+          ...(fileType ? { fileType } : {}),
+          ...(draftReply
+            ? {
+                replyTo: {
+                  messageId: draftReply.id,
+                  senderId: draftReply.senderId,
+                  senderName: draftReply.senderName,
+                  text: draftReply.text || "",
+                  ...(draftReply.fileName ? { fileName: draftReply.fileName } : {}),
+                  ...(draftReply.fileType ? { fileType: draftReply.fileType } : {}),
+                  ...(draftReply.sharedPost
+                    ? {
+                        sharedPost: {
+                          caption: draftReply.sharedPost.caption || "",
+                          mediaType: draftReply.sharedPost.mediaType,
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : {}),
+        };
+
+        const path =
+          draftConversation.type === "group"
+            ? `groupMessages/${draftConversation.id}`
+            : `messages/${draftConversation.id}`;
+
+        await set(push(ref(db, path)), messagePayload);
+
+        const preview =
+          validatedText ||
+          (draftGif
+            ? "GIF"
+            : draftFile
+              ? `Attachment: ${draftFile.name}`
+              : "");
+
+        try {
+          await updateConversationPreview(draftConversation, preview, now);
+        } catch (previewError) {
+          console.error("Conversation metadata update failed after message send:", previewError);
+        }
+
+        if (draftConversation.type === "group") {
+          try {
+            const members = await get(ref(db, `groupMembers/${draftConversation.id}`));
+            if (members.exists()) {
+              const memberMap = members.val() as Record<string, Record<string, unknown>>;
+              const usernamesInMessage = extractMentions(validatedText);
+              if (usernamesInMessage.length > 0) {
+                await sendMentionNotifications({
+                  actorUserId: user.uid,
+                  actorUsername: username,
+                  actorAvatar: selfAvatar,
+                  text: validatedText,
+                  sourceType: "group_message",
+                  sourceId: draftConversation.id,
+                  groupId: draftConversation.id,
+                  chatId: draftConversation.id,
+                  usernames: usernamesInMessage,
+                  knownUsers: Object.entries(memberMap).map(([uid, info]) => ({
+                    uid,
+                    username: (info.username as string) || "",
+                  })),
+                });
+              }
+            }
+          } catch (mentionError) {
+            console.error("Group mention notifications failed:", mentionError);
+          }
+        }
+
+        setOptimisticMessages((prev) =>
+          prev.map((entry) =>
+            entry.id === optimisticId ? { ...entry, localStatus: "sent" } : entry,
+          ),
+        );
+        setComposerState("done");
+
+        setTimeout(() => {
+          setOptimisticMessages((prev) =>
+            prev.filter((entry) => entry.id !== optimisticId),
+          );
+        }, 700);
+      } catch (error) {
+        console.error(error);
+        const message = error instanceof Error ? error.message : "Permission denied";
+        setOptimisticMessages((prev) =>
+          prev.map((entry) =>
+            entry.id === optimisticId
+              ? { ...entry, localStatus: "failed", localError: message }
+              : entry,
+          ),
+        );
+        setComposerState("error");
+        toast({
+          title: "Error",
+          description: `Failed to send message (${message})`,
+          variant: "destructive",
+        });
+      } finally {
+        setActiveSends((prev) => Math.max(0, prev - 1));
+      }
+    })();
+  };
   const createGroup = async () => {
     if (!user) return;
     const parsedName = parseGroupName(groupName);
@@ -1652,7 +1791,7 @@ export default function Bakaiti() {
               <button
                 key={c.key}
                 onClick={() => setSelectedKey(c.key)}
-                className={cn("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary", selectedKey === c.key && "bg-secondary")}
+                className={cn("flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-secondary", selectedKey === c.key && "bg-secondary")}
               >
                 {c.type === "dm" ? (
                   <Avatar className="h-12 w-12">
@@ -1716,7 +1855,7 @@ export default function Bakaiti() {
 
             <ScrollArea className="flex-1 p-4">
               <div className="space-y-3">
-                {messages.map((m) => {
+                {displayedMessages.map((m) => {
                   if (m.senderId === "system") {
                     return (
                       <p key={m.id} className="text-center text-xs text-muted-foreground">
@@ -1744,12 +1883,12 @@ export default function Bakaiti() {
                   return (
                     <div
                       key={m.id}
-                      className={cn("flex", isMine ? "justify-end" : "justify-start")}
+                      className={cn("flex transition-all duration-200", isMine ? "justify-end" : "justify-start")}
                     >
                       <div className="group max-w-[80%]">
                         <div
                           className={cn(
-                            "rounded-2xl px-3 py-2",
+                            "rounded-2xl px-3 py-2 shadow-sm transition-all duration-200",
                             isMine ? "bg-primary text-primary-foreground" : "bg-secondary",
                           )}
                         >
@@ -1761,45 +1900,55 @@ export default function Bakaiti() {
                             ) : (
                               <span />
                             )}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                                >
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-44">
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setReplyTarget(m);
-                                  }}
-                                >
-                                  <CornerUpLeft className="mr-2 h-4 w-4" />
-                                  Reply
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setReactionTargetId(m.id);
-                                    setReactionInput("");
-                                  }}
-                                >
-                                  <SmilePlus className="mr-2 h-4 w-4" />
-                                  React
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setForwardTarget(m);
-                                    setForwardSearch("");
-                                  }}
-                                >
-                                  <Forward className="mr-2 h-4 w-4" />
-                                  Forward
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            {m.localOnly ? (
+                              <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+                                {m.localStatus === "sending" ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin opacity-70" />
+                                ) : (
+                                  <span className="h-3.5 w-3.5" />
+                                )}
+                              </div>
+                            ) : (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-44">
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setReplyTarget(m);
+                                    }}
+                                  >
+                                    <CornerUpLeft className="mr-2 h-4 w-4" />
+                                    Reply
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setReactionTargetId(m.id);
+                                      setReactionInput("");
+                                    }}
+                                  >
+                                    <SmilePlus className="mr-2 h-4 w-4" />
+                                    React
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setForwardTarget(m);
+                                      setForwardSearch("");
+                                    }}
+                                  >
+                                    <Forward className="mr-2 h-4 w-4" />
+                                    Forward
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
                           </div>
 
                           {m.replyTo && (
@@ -1882,7 +2031,20 @@ export default function Bakaiti() {
                               <MentionText text={m.text} />
                             </p>
                           )}
-                          <p className="mt-1 text-[10px] opacity-70">{timeAgo(m.timestamp)}</p>
+                          <p className="mt-1 flex items-center gap-1 text-[10px] opacity-70">
+                            {m.localStatus === "sending" ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Sending...
+                              </>
+                            ) : m.localStatus === "failed" ? (
+                              <span className="text-destructive">Failed</span>
+                            ) : m.localStatus === "sent" ? (
+                              "Done"
+                            ) : (
+                              timeAgo(m.timestamp)
+                            )}
+                          </p>
                         </div>
 
                         {grouped.length > 0 && (
@@ -1977,6 +2139,20 @@ export default function Bakaiti() {
                   </Button>
                 </div>
               )}
+              {(activeSends > 0 || composerState === "done" || composerState === "error") && (
+                <div className="mb-2 flex items-center justify-between rounded-md border border-border/70 bg-secondary/40 px-2 py-1 text-[11px]">
+                  {activeSends > 0 ? (
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Sending in background ({activeSends})
+                    </div>
+                  ) : composerState === "done" ? (
+                    <span className="text-emerald-500">Done</span>
+                  ) : (
+                    <span className="text-destructive">Some messages failed</span>
+                  )}
+                </div>
+              )}
               <div className="relative flex items-center gap-2">
                 {showGifPicker && (
                   <GifPicker
@@ -1989,18 +2165,18 @@ export default function Bakaiti() {
                     onClose={() => setShowGifPicker(false)}
                   />
                 )}
-                <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()} disabled={sending}>
+                <Button variant="ghost" size="icon" onClick={() => fileInputRef.current?.click()}>
                   <Paperclip className="h-5 w-5" />
                 </Button>
                 <Button
                   variant={showGifPicker ? "secondary" : "ghost"}
                   size="icon"
                   onClick={() => setShowGifPicker((prev) => !prev)}
-                  disabled={sending}
                 >
                   <Smile className="h-5 w-5" />
                 </Button>
                 <MentionInput
+                  ref={messageInputRef}
                   placeholder="Message... Use @ to mention"
                   value={messageText}
                   onChange={setMessageText}
@@ -2011,15 +2187,14 @@ export default function Bakaiti() {
                     }
                   }}
                   className="border-0 bg-secondary"
-                  disabled={sending}
                 />
                 <Button
                   variant="ghost"
                   size="icon"
                   onClick={sendMessage}
-                  disabled={sending || (!messageText.trim() && !selectedFile && !selectedGif)}
+                  disabled={!messageText.trim() && !selectedFile && !selectedGif}
                 >
-                  {sending ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Send className="h-5 w-5" />}
+                  <Send className="h-5 w-5" />
                 </Button>
               </div>
             </div>
@@ -2445,3 +2620,8 @@ export default function Bakaiti() {
     </div>
   );
 }
+
+
+
+
+
