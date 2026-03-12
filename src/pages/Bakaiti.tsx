@@ -747,7 +747,21 @@ export default function Bakaiti() {
   }, [displayedMessages, isMobile]);
 
   useEffect(() => {
-    const open = location.state?.openChatWith;
+    const state = (location.state || {}) as {
+      openChatWith?: { userId: string; username: string; avatar?: string };
+      openConversation?: { type?: ConvType; id?: string };
+    };
+
+    const openConversation = state.openConversation;
+    if (
+      openConversation?.id &&
+      (openConversation.type === "dm" || openConversation.type === "group")
+    ) {
+      setSelectedKey(`${openConversation.type}:${openConversation.id}`);
+      return;
+    }
+
+    const open = state.openChatWith;
     if (!open || !user) return;
     const chatId = [user.uid, open.userId].sort().join("_");
     const now = new Date().toISOString();
@@ -1835,8 +1849,8 @@ export default function Bakaiti() {
   const chatVisible = !isMobile || !!selectedConversation;
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] touch-pan-y overscroll-none bg-background md:h-screen">
-      <div className={cn("border-r border-border md:w-[22rem] lg:w-96", listVisible ? "flex w-full flex-col" : "hidden")}>
+    <div className="flex h-[calc(100dvh-56px)] w-full min-h-0 min-w-0 overflow-hidden touch-pan-y overscroll-none bg-background md:h-screen">
+      <div className={cn("min-h-0 min-w-0 border-r border-border md:w-[22rem] lg:w-96", listVisible ? "flex w-full flex-col" : "hidden")}>
         <div className="border-b border-border p-4">
           <h1 className="mb-4 text-xl font-semibold">{username}</h1>
           <div className="relative mb-3">
@@ -1847,7 +1861,7 @@ export default function Bakaiti() {
             <Users className="h-4 w-4" /> Create Group
           </Button>
         </div>
-        <ScrollArea className="flex-1 overscroll-contain">
+        <ScrollArea className="min-h-0 flex-1 overscroll-contain">
           {loading ? (
             <div className="p-6 text-center text-muted-foreground">Loading conversations...</div>
           ) : filteredConversations.length === 0 ? (
@@ -1883,21 +1897,21 @@ export default function Bakaiti() {
         </ScrollArea>
       </div>
 
-      <div className={cn("min-w-0 flex-1 flex-col", chatVisible ? "flex" : "hidden")}>
+      <div className={cn("min-h-0 min-w-0 flex-1 flex-col", chatVisible ? "flex w-full" : "hidden")}>
         {selectedConversation ? (
           <>
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center justify-between border-b border-border px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2 overflow-hidden md:gap-3">
                 {isMobile && (
                   <Button variant="ghost" size="icon" onClick={() => setSelectedKey(null)}>
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                 )}
-                <p className="truncate text-sm font-semibold">{selectedConversation.title}</p>
+                <p className="max-w-[42vw] truncate text-sm font-semibold md:max-w-none">{selectedConversation.title}</p>
                 {selectedConversation.type === "group" && selectedConversation.role && (
                   <Badge variant="outline">{selectedConversation.role}</Badge>
                 )}
-                <Badge variant={e2eeActive ? "secondary" : "outline"}>
+                <Badge className="shrink-0" variant={e2eeActive ? "secondary" : "outline"}>
                   {e2eeActive ? "E2EE" : "Standard"}
                 </Badge>
               </div>
@@ -1905,7 +1919,7 @@ export default function Bakaiti() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="gap-2"
+                  className="gap-2 shrink-0"
                   onClick={() => {
                     setGroupInfoOpen(true);
                     loadGroupDetails().catch((error) => {
@@ -1914,12 +1928,13 @@ export default function Bakaiti() {
                   }}
                 >
                   <Users className="h-4 w-4" />
-                  Members
+                  <span className="hidden md:inline">Members</span>
+
                 </Button>
               )}
             </div>
 
-            <ScrollArea className="flex-1 overscroll-contain p-3 md:p-4">
+            <ScrollArea className="min-h-0 flex-1 overscroll-contain p-3 md:p-4">
               <div className="space-y-3">
                 {displayedMessages.map((m) => {
                   if (m.senderId === "system") {
@@ -2212,7 +2227,7 @@ export default function Bakaiti() {
                   )}
                 </div>
               )}
-              <div className="relative flex items-center gap-2">
+              <div className="relative flex w-full min-w-0 items-center gap-2">
                 {showGifPicker && (
                   <GifPicker
                     apiKey={giphyApiKey}
@@ -2244,7 +2259,7 @@ export default function Bakaiti() {
                       sendMessage();
                     }
                   }}
-                  className="border-0 bg-secondary"
+                  className="min-w-0 flex-1 border-0 bg-secondary"
                 />
                 <Button
                   variant="ghost"
@@ -2678,5 +2693,4 @@ export default function Bakaiti() {
     </div>
   );
 }
-
 

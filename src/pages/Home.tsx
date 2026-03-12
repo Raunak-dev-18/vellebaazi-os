@@ -2,7 +2,7 @@ import { PostCard } from "@/components/PostCard";
 import { Stories } from "@/components/Stories";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { getDatabase, ref, get, set, push } from "firebase/database";
@@ -54,6 +54,11 @@ export default function Home() {
   const [hasMorePosts, setHasMorePosts] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [followLoading, setFollowLoading] = useState<Set<string>>(new Set());
+  const [searchParams, setSearchParams] = useSearchParams();
+  const targetPostId = searchParams.get("post");
+  const targetCommentId = searchParams.get("comment");
+  const postRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const handledDeepLinkRef = useRef<string | null>(null);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -214,6 +219,64 @@ export default function Home() {
     setHasMorePosts(allPostsData.length > displayedCount);
     setPosts(allPostsData.slice(0, displayedCount));
   }, [displayedCount, allPostsData]);
+
+  const clearNotificationDeepLink = useCallback(() => {
+    if (!targetPostId && !targetCommentId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("post");
+    next.delete("comment");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, targetCommentId, targetPostId]);
+
+  useEffect(() => {
+    if (!targetPostId) {
+      handledDeepLinkRef.current = null;
+      return;
+    }
+    if (allPostsData.length === 0) return;
+
+    const targetIndex = allPostsData.findIndex((entry) => entry.id === targetPostId);
+    if (targetIndex < 0) return;
+
+    if (targetIndex + 1 > displayedCount) {
+      setDisplayedCount(targetIndex + 1);
+      return;
+    }
+
+    if (!posts.some((entry) => entry.id === targetPostId)) return;
+
+    const deepLinkKey = `${targetPostId}:${targetCommentId || ""}`;
+    if (handledDeepLinkRef.current === deepLinkKey) return;
+    handledDeepLinkRef.current = deepLinkKey;
+
+    const scrollTimer = window.setTimeout(() => {
+      postRefs.current[targetPostId]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 80);
+
+    let clearTimer: number | null = null;
+    if (!targetCommentId) {
+      clearTimer = window.setTimeout(() => {
+        clearNotificationDeepLink();
+      }, 220);
+    }
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      if (clearTimer !== null) {
+        window.clearTimeout(clearTimer);
+      }
+    };
+  }, [
+    allPostsData,
+    clearNotificationDeepLink,
+    displayedCount,
+    posts,
+    targetCommentId,
+    targetPostId,
+  ]);
 
   const loadMorePosts = useCallback(() => {
     if (isLoadingMore || !hasMorePosts) return;
@@ -459,21 +522,37 @@ export default function Home() {
             </div>
           ) : (
             <>
-              {posts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  id={post.id}
-                  userId={post.userId}
-                  username={post.username}
-                  avatar={post.userAvatar}
-                  image={post.mediaUrl}
-                  likes={post.likes || 0}
-                  caption={post.caption}
-                  timeAgo={
-                    post.createdAt ? getTimeAgo(post.createdAt) : "Just now"
-                  }
-                />
-              ))}
+              {posts.map((post) => {
+                const isTargetPost = targetPostId === post.id;
+                return (
+                  <div
+                    key={post.id}
+                    ref={(el) => {
+                      postRefs.current[post.id] = el;
+                    }}
+                  >
+                    <PostCard
+                      id={post.id}
+                      userId={post.userId}
+                      username={post.username}
+                      avatar={post.userAvatar}
+                      image={post.mediaUrl}
+                      likes={post.likes || 0}
+                      caption={post.caption}
+                      timeAgo={
+                        post.createdAt ? getTimeAgo(post.createdAt) : "Just now"
+                      }
+                      autoOpenComments={isTargetPost && Boolean(targetCommentId)}
+                      highlightCommentId={isTargetPost ? targetCommentId || undefined : undefined}
+                      onAutoOpenHandled={
+                        isTargetPost && targetCommentId
+                          ? clearNotificationDeepLink
+                          : undefined
+                      }
+                    />
+                  </div>
+                );
+              })}
               {/* Infinite scroll trigger */}
               <div ref={loadMoreRef} className="h-4" />
               {isLoadingMore && (

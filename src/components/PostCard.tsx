@@ -39,6 +39,9 @@ interface PostCardProps {
   caption: string;
   timeAgo: string;
   userId: string;
+  autoOpenComments?: boolean;
+  highlightCommentId?: string;
+  onAutoOpenHandled?: () => void;
 }
 
 interface LikeEntry {
@@ -102,6 +105,9 @@ export function PostCard({
   caption,
   timeAgo,
   userId,
+  autoOpenComments = false,
+  highlightCommentId,
+  onAutoOpenHandled,
 }: PostCardProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -137,6 +143,9 @@ export function PostCard({
   const [shareOpen, setShareOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
+  const commentRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const autoOpenHandledRef = useRef(false);
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
   const giphyApiKey =
     (import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || undefined;
 
@@ -239,6 +248,49 @@ export function PostCard({
     fetchComments();
     fetchLikedComments();
   }, [checkIfLiked, fetchComments, fetchLikedComments]);
+
+  useEffect(() => {
+    if (!autoOpenComments) {
+      autoOpenHandledRef.current = false;
+      return;
+    }
+
+    if (autoOpenHandledRef.current) return;
+    autoOpenHandledRef.current = true;
+    setShowComments(true);
+    onAutoOpenHandled?.();
+  }, [autoOpenComments, onAutoOpenHandled]);
+
+  useEffect(() => {
+    if (!showComments || !highlightCommentId || comments.length === 0) return;
+
+    const anchorId =
+      comments.find((entry) => entry.id === highlightCommentId)?.id ??
+      comments.find((entry) =>
+        entry.repliesList.some((reply) => reply.id === highlightCommentId),
+      )?.id;
+
+    if (!anchorId) return;
+
+    setHighlightedCommentId(anchorId);
+    const scrollTimer = window.setTimeout(() => {
+      commentRefs.current[anchorId]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 80);
+
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedCommentId((current) =>
+        current === anchorId ? null : current,
+      );
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [comments, highlightCommentId, showComments]);
 
   const loadMoreComments = () => {
     if (!hasMoreComments) return;
@@ -697,7 +749,16 @@ export function PostCard({
             {comments.map((commentItem) => (
               <div key={commentItem.id} className="space-y-2">
                 {/* Main Comment */}
-                <div className="flex gap-2">
+                <div
+                  ref={(el) => {
+                    commentRefs.current[commentItem.id] = el;
+                  }}
+                  className={`flex gap-2 rounded-md p-2 transition-colors ${
+                    highlightedCommentId === commentItem.id
+                      ? "bg-primary/10 ring-1 ring-primary/40"
+                      : ""
+                  }`}
+                >
                   <Avatar className="h-8 w-8 flex-shrink-0">
                     <AvatarImage
                       src={commentItem.userAvatar}
@@ -1063,5 +1124,6 @@ export function PostCard({
     </div>
   );
 }
+
 
 

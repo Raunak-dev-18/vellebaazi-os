@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getDatabase, ref, get, set, push, remove, update } from "firebase/database";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +24,7 @@ interface Notification {
   groupId?: string;
   postId?: string;
   storyId?: string;
+  chatId?: string;
 }
 
 interface NotificationRecord {
@@ -40,6 +41,7 @@ interface NotificationRecord {
   groupId?: string;
   postId?: string;
   storyId?: string;
+  chatId?: string;
 }
 
 export default function Notifications() {
@@ -422,47 +424,99 @@ export default function Notifications() {
     }
   };
 
-  const handleUserClick = (username: string) => {
-    navigate(`/users/profile/${username}`);
-  };
 
-  const handleMentionClick = (notification: Notification) => {
-    if (notification.sourceType === "group_message") {
-      navigate("/bakaiti");
-      return;
-    }
-
-    const isStoryNotification =
-      notification.sourceType === "story" ||
-      notification.type === "story_reaction" ||
-      notification.type === "story_comment" ||
-      notification.type === "story_reply";
-
-    if (isStoryNotification) {
-      const storyId = notification.storyId || notification.sourceId;
-      if (!storyId) {
-        navigate("/");
-        return;
+  const openPostTarget = useCallback(
+    (postId: string, commentId?: string) => {
+      const params = new URLSearchParams();
+      params.set("post", postId);
+      if (commentId) {
+        params.set("comment", commentId);
       }
+      navigate(`/?${params.toString()}`);
+    },
+    [navigate],
+  );
 
-      const storyOwnerId =
+  const handleMentionClick = useCallback(
+    async (notification: Notification) => {
+      const isStoryNotification =
+        notification.sourceType === "story" ||
         notification.type === "story_reaction" ||
         notification.type === "story_comment" ||
-        notification.type === "story_reply"
-          ? user?.uid
-          : notification.fromUserId;
+        notification.type === "story_reply";
 
-      if (!storyOwnerId) {
-        navigate("/");
+      if (isStoryNotification) {
+        const storyId = notification.storyId || notification.sourceId;
+        if (!storyId) {
+          navigate("/");
+          return;
+        }
+
+        let storyOwnerId: string | null =
+          notification.type === "story_reaction" ||
+          notification.type === "story_comment" ||
+          notification.type === "story_reply"
+            ? user?.uid || null
+            : notification.fromUserId || null;
+
+        if (!storyOwnerId) {
+          try {
+            const db = getDatabase();
+            const ownerSnapshot = await get(ref(db, `stories/${storyId}/userId`));
+            if (ownerSnapshot.exists()) {
+              storyOwnerId = String(ownerSnapshot.val());
+            }
+          } catch {
+            // Fall back to home if owner lookup fails.
+          }
+        }
+
+        if (!storyOwnerId) {
+          navigate("/");
+          return;
+        }
+
+        navigate(`/story/${storyOwnerId}/${storyId}`);
         return;
       }
 
-      navigate(`/story/${storyOwnerId}/${storyId}`);
-      return;
-    }
+      if (
+        notification.sourceType === "group_message" ||
+        (notification.groupId && notification.groupId.trim().length > 0)
+      ) {
+        const groupId =
+          notification.groupId || notification.chatId || notification.sourceId;
+        if (groupId) {
+          navigate("/bakaiti", {
+            state: { openConversation: { type: "group", id: groupId } },
+          });
+          return;
+        }
+        navigate("/bakaiti");
+        return;
+      }
 
-    handleUserClick(notification.fromUsername);
-  };
+      const postId =
+        notification.postId ||
+        (notification.sourceType === "post" ? notification.sourceId : undefined);
+      if (postId) {
+        const commentId =
+          notification.sourceType === "comment" ? notification.sourceId : undefined;
+        openPostTarget(postId, commentId);
+        return;
+      }
+
+      if (notification.chatId) {
+        navigate("/bakaiti", {
+          state: { openConversation: { type: "dm", id: notification.chatId } },
+        });
+        return;
+      }
+
+      navigate(`/users/profile/${notification.fromUsername}`);
+    },
+    [navigate, openPostTarget, user?.uid],
+  );
 
   const getMentionSourceLabel = (notification: Notification) => {
     switch (notification.sourceType) {
@@ -712,5 +766,4 @@ export default function Notifications() {
     </div>
   );
 }
-
 
