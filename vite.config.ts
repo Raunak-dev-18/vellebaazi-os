@@ -17,6 +17,119 @@ const getErrorDetails = (error: unknown): string => {
   return msg;
 };
 
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const decodeHtmlEntities = (value: string) =>
+  value
+    .replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (full, entity: string) => {
+      const lower = entity.toLowerCase();
+      if (lower === "amp") return "&";
+      if (lower === "lt") return "<";
+      if (lower === "gt") return ">";
+      if (lower === "quot") return '"';
+      if (lower === "apos" || lower === "#39") return "'";
+      if (lower.startsWith("#x")) {
+        const code = Number.parseInt(lower.slice(2), 16);
+        return Number.isFinite(code) ? String.fromCharCode(code) : full;
+      }
+      if (lower.startsWith("#")) {
+        const code = Number.parseInt(lower.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCharCode(code) : full;
+      }
+      return full;
+    })
+    .trim();
+
+const extractMetaTagContent = (html: string, key: string) => {
+  const escaped = escapeRegex(key);
+  const patterns = [
+    new RegExp(
+      `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']+)["'][^>]*>`,
+      "i",
+    ),
+    new RegExp(
+      `<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${escaped}["'][^>]*>`,
+      "i",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtmlEntities(match[1]);
+  }
+
+  return "";
+};
+
+const extractTagInnerText = (html: string, tagName: string) => {
+  const escaped = escapeRegex(tagName);
+  const pattern = new RegExp(`<${escaped}[^>]*>([\\s\\S]*?)<\\/${escaped}>`, "i");
+  const match = html.match(pattern);
+  if (!match?.[1]) return "";
+  return decodeHtmlEntities(match[1].replace(/\s+/g, " "));
+};
+
+const extractLinkHref = (html: string, relContains: string) => {
+  const escaped = escapeRegex(relContains);
+  const patterns = [
+    new RegExp(
+      `<link[^>]+rel=["'][^"']*${escaped}[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>`,
+      "i",
+    ),
+    new RegExp(
+      `<link[^>]+href=["']([^"']+)["'][^>]*rel=["'][^"']*${escaped}[^"']*["'][^>]*>`,
+      "i",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtmlEntities(match[1]);
+  }
+
+  return "";
+};
+
+const toAbsoluteUrl = (value: string, base: string) => {
+  if (!value) return "";
+  try {
+    return new URL(value, base).toString();
+  } catch {
+    return "";
+  }
+};
+
+const isDisallowedPreviewHost = (hostname: string) => {
+  const host = hostname.toLowerCase();
+  if (!host) return true;
+
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
+    return true;
+  }
+
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const nums = ipv4Match.slice(1).map((entry) => Number(entry));
+    if (nums.some((entry) => Number.isNaN(entry) || entry < 0 || entry > 255)) return true;
+    if (nums[0] === 10 || nums[0] === 127) return true;
+    if (nums[0] === 192 && nums[1] === 168) return true;
+    if (nums[0] === 172 && nums[1] >= 16 && nums[1] <= 31) return true;
+    if (nums[0] === 169 && nums[1] === 254) return true;
+  }
+
+  if (host.includes(":") && (host.startsWith("fc") || host.startsWith("fd") || host === "::1")) {
+    return true;
+  }
+
+  return false;
+};
+
 const createStorageProxy = (env: Record<string, string>) => {
   const app = express();
   const upload = multer({
@@ -51,6 +164,109 @@ const createStorageProxy = (env: Record<string, string>) => {
   };
 
   app.use(express.json({ limit: "1mb" }));
+
+  app.get("/api/link-preview", async (req: Request, res: Response) => {
+    const rawUrl = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
+    if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+      res.status(400).json({ error: "Missing url query parameter." });
+      return;
+    }
+
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(rawUrl.trim());
+    } catch {
+      res.status(400).json({ error: "Invalid URL." });
+      return;
+    }
+
+    if (!targetUrl.protocol || !["http:", "https:"].includes(targetUrl.protocol)) {
+      res.status(400).json({ error: "Only http/https URLs are supported." });
+      return;
+    }
+
+    if (isDisallowedPreviewHost(targetUrl.hostname)) {
+      res.status(400).json({ error: "Preview blocked for local/private URLs." });
+      return;
+    }
+
+    try {
+      const response = await fetch(targetUrl.toString(), {
+        method: "GET",
+        redirect: "follow",
+        headers: {
+          "User-Agent": "VelleBaaziLinkPreview/1.0",
+          Accept: "text/html,application/xhtml+xml",
+        },
+      });
+
+      if (!response.ok) {
+        res.status(502).json({ error: `Unable to fetch URL (${response.status}).` });
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("text/html")) {
+        res.status(200).json({
+          url: targetUrl.toString(),
+          canonicalUrl: targetUrl.toString(),
+          siteName: targetUrl.hostname.replace(/^www\./, ""),
+          title: targetUrl.hostname.replace(/^www\./, ""),
+          description: "",
+          image: null,
+          favicon: `${targetUrl.origin}/favicon.ico`,
+        });
+        return;
+      }
+
+      const html = (await response.text()).slice(0, 300000);
+
+      const ogTitle = extractMetaTagContent(html, "og:title");
+      const ogDescription = extractMetaTagContent(html, "og:description");
+      const ogImage = extractMetaTagContent(html, "og:image");
+      const ogSiteName = extractMetaTagContent(html, "og:site_name");
+      const ogUrl = extractMetaTagContent(html, "og:url");
+      const twitterTitle = extractMetaTagContent(html, "twitter:title");
+      const twitterDescription = extractMetaTagContent(html, "twitter:description");
+      const twitterImage = extractMetaTagContent(html, "twitter:image");
+      const metaDescription = extractMetaTagContent(html, "description");
+      const canonicalHref = extractLinkHref(html, "canonical");
+      const pageTitle = extractTagInnerText(html, "title");
+      const faviconHref = extractLinkHref(html, "icon");
+
+      const resolvedCanonical =
+        toAbsoluteUrl(ogUrl, targetUrl.toString()) ||
+        toAbsoluteUrl(canonicalHref, targetUrl.toString()) ||
+        targetUrl.toString();
+
+      const resolvedImage =
+        toAbsoluteUrl(ogImage, targetUrl.toString()) ||
+        toAbsoluteUrl(twitterImage, targetUrl.toString()) ||
+        null;
+
+      const resolvedFavicon =
+        toAbsoluteUrl(faviconHref, targetUrl.toString()) || `${targetUrl.origin}/favicon.ico`;
+
+      const siteName = (ogSiteName || targetUrl.hostname).replace(/^www\./, "");
+      const title =
+        ogTitle || twitterTitle || pageTitle || siteName || targetUrl.hostname.replace(/^www\./, "");
+      const description = ogDescription || twitterDescription || metaDescription || "";
+
+      res.status(200).json({
+        url: targetUrl.toString(),
+        canonicalUrl: resolvedCanonical,
+        siteName,
+        title,
+        description,
+        image: resolvedImage,
+        favicon: resolvedFavicon,
+      });
+    } catch (error) {
+      const details = getErrorDetails(error);
+      console.error("Link preview fetch failed:", details);
+      res.status(502).json({ error: "Failed to fetch link preview." });
+    }
+  });
 
   app.post(
     "/api/storage/upload",

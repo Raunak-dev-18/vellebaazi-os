@@ -130,6 +130,16 @@ interface ChatMessage {
   >;
 }
 
+interface LinkPreviewData {
+  url: string;
+  canonicalUrl?: string;
+  siteName?: string;
+  title?: string;
+  description?: string;
+  image?: string | null;
+  favicon?: string | null;
+}
+
 interface UserOption {
   uid: string;
   username: string;
@@ -147,36 +157,36 @@ interface GroupMemberEntry {
 type FollowState = "self" | "none" | "following" | "requested";
 
 const QUICK_REACTIONS = [
-  "👍",
-  "❤️",
-  "😂",
-  "😮",
-  "😢",
-  "😡",
-  "🔥",
-  "👏",
-  "🙏",
-  "🎉",
-  "😍",
-  "🤔",
-  "🥳",
-  "🤣",
-  "😎",
-  "🤝",
-  "💯",
-  "✨",
-  "👀",
-  "🙌",
-  "🤍",
-  "🫶",
-  "😴",
-  "💀",
-  "🤯",
-  "🫡",
-  "🤗",
-  "🤩",
-  "🥶",
-  "😤",
+  "ðŸ‘",
+  "â¤ï¸",
+  "ðŸ˜‚",
+  "ðŸ˜®",
+  "ðŸ˜¢",
+  "ðŸ˜¡",
+  "ðŸ”¥",
+  "ðŸ‘",
+  "ðŸ™",
+  "ðŸŽ‰",
+  "ðŸ˜",
+  "ðŸ¤”",
+  "ðŸ¥³",
+  "ðŸ¤£",
+  "ðŸ˜Ž",
+  "ðŸ¤",
+  "ðŸ’¯",
+  "âœ¨",
+  "ðŸ‘€",
+  "ðŸ™Œ",
+  "ðŸ¤",
+  "ðŸ«¶",
+  "ðŸ˜´",
+  "ðŸ’€",
+  "ðŸ¤¯",
+  "ðŸ«¡",
+  "ðŸ¤—",
+  "ðŸ¤©",
+  "ðŸ¥¶",
+  "ðŸ˜¤",
 ];
 
 const timeAgo = (value: string) => {
@@ -204,6 +214,31 @@ const extractFirstSymbol = (value: string) => {
   }
 
   return Array.from(input)[0] || "";
+};
+
+const LINK_URL_PATTERN = /(https?:\/\/[^\s<>"'`]+)/i;
+const TRAILING_URL_PUNCTUATION = /[),.!?:;'\"]+$/;
+
+const extractFirstUrl = (value: string) => {
+  const match = value.match(LINK_URL_PATTERN);
+  if (!match?.[1]) return null;
+
+  const cleaned = match[1].replace(TRAILING_URL_PUNCTUATION, "");
+  try {
+    const parsed = new URL(cleaned);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const getHostLabelFromUrl = (value: string) => {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
 };
 
 const getMessagePreviewText = (message: ChatMessage) => {
@@ -293,11 +328,13 @@ export default function Bakaiti() {
   const [addingMembers, setAddingMembers] = useState(false);
   const [followStates, setFollowStates] = useState<Record<string, FollowState>>({});
   const [privacyMap, setPrivacyMap] = useState<Record<string, "public" | "private">>({});
+  const [linkPreviewsByUrl, setLinkPreviewsByUrl] = useState<Record<string, LinkPreviewData | null>>({});
 
   const [fullImage, setFullImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const linkPreviewFetchInFlight = useRef<Set<string>>(new Set());
 
   const selectedConversation =
     conversations.find((c) => c.key === selectedKey) || null;
@@ -343,6 +380,18 @@ export default function Bakaiti() {
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       ),
     [messages, selectedOptimisticMessages],
+  );
+
+  const messagePreviewUrls = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          displayedMessages
+            .map((entry) => extractFirstUrl(entry.text || ""))
+            .filter((url): url is string => Boolean(url)),
+        ),
+      ),
+    [displayedMessages],
   );
 
   const availableGroupCandidates = useMemo(() => {
@@ -430,6 +479,43 @@ export default function Bakaiti() {
     }, 1400);
     return () => clearTimeout(timer);
   }, [activeSends, composerState]);
+
+  useEffect(() => {
+    messagePreviewUrls.forEach((url) => {
+      if (Object.prototype.hasOwnProperty.call(linkPreviewsByUrl, url)) return;
+      if (linkPreviewFetchInFlight.current.has(url)) return;
+
+      linkPreviewFetchInFlight.current.add(url);
+      fetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Preview request failed (${response.status})`);
+          }
+          const payload = (await response.json()) as Partial<LinkPreviewData>;
+          const normalized: LinkPreviewData = {
+            url: typeof payload.url === "string" && payload.url ? payload.url : url,
+            canonicalUrl:
+              typeof payload.canonicalUrl === "string" && payload.canonicalUrl
+                ? payload.canonicalUrl
+                : url,
+            siteName: typeof payload.siteName === "string" ? payload.siteName : "",
+            title: typeof payload.title === "string" ? payload.title : "",
+            description:
+              typeof payload.description === "string" ? payload.description : "",
+            image: typeof payload.image === "string" ? payload.image : null,
+            favicon: typeof payload.favicon === "string" ? payload.favicon : null,
+          };
+          setLinkPreviewsByUrl((prev) => ({ ...prev, [url]: normalized }));
+        })
+        .catch((error) => {
+          console.error("Failed to fetch link preview:", error);
+          setLinkPreviewsByUrl((prev) => ({ ...prev, [url]: null }));
+        })
+        .finally(() => {
+          linkPreviewFetchInFlight.current.delete(url);
+        });
+    });
+  }, [linkPreviewsByUrl, messagePreviewUrls]);
 
   const resolveConversationParticipants = useCallback(
     async (conversation: Conversation) => {
@@ -1960,6 +2046,12 @@ export default function Bakaiti() {
                         : m.replyTo?.fileName
                           ? `Attachment: ${m.replyTo.fileName}`
                           : "Message");
+                  const messageUrl = extractFirstUrl(m.text || "");
+                  const linkPreview = messageUrl ? linkPreviewsByUrl[messageUrl] : undefined;
+                  const previewHost =
+                    (linkPreview?.siteName || (messageUrl ? getHostLabelFromUrl(messageUrl) : ""))
+                      .toString()
+                      .trim();
 
                   return (
                     <div
@@ -2075,6 +2167,51 @@ export default function Bakaiti() {
                             <p className="whitespace-pre-wrap text-sm">
                               <MentionText text={m.text} />
                             </p>
+                          )}
+                          {messageUrl && linkPreview && (
+                            <a
+                              href={linkPreview.canonicalUrl || linkPreview.url || messageUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 block overflow-hidden rounded-xl border border-border/60 bg-background/85"
+                            >
+                              {linkPreview.image && (
+                                <img
+                                  src={linkPreview.image}
+                                  alt={linkPreview.title || previewHost || "Link preview"}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="h-36 w-full object-cover"
+                                />
+                              )}
+                              <div className="p-2">
+                                <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  {linkPreview.favicon && (
+                                    <img
+                                      src={linkPreview.favicon}
+                                      alt="Site icon"
+                                      loading="lazy"
+                                      decoding="async"
+                                      className="h-3.5 w-3.5 rounded-sm"
+                                    />
+                                  )}
+                                  <span className="truncate">{previewHost || "Link"}</span>
+                                </div>
+                                <p className="truncate text-xs font-semibold text-foreground">
+                                  {linkPreview.title || previewHost || messageUrl}
+                                </p>
+                                {linkPreview.description ? (
+                                  <p className="mt-0.5 break-words text-[11px] text-muted-foreground">
+                                    {linkPreview.description}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </a>
+                          )}
+                          {messageUrl && linkPreview === undefined && (
+                            <div className="mt-2 rounded-lg border border-border/60 bg-background/75 px-2 py-1 text-[11px] text-muted-foreground">
+                              Loading link preview...
+                            </div>
                           )}
                           <p className="mt-1 flex items-center gap-1 text-[10px] opacity-70">
                             {m.localStatus === "sending" ? (
@@ -2693,4 +2830,3 @@ export default function Bakaiti() {
     </div>
   );
 }
-
