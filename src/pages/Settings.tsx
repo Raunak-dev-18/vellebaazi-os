@@ -661,6 +661,60 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Appearance */}
+        <div className="space-y-6 border-t border-border pt-6">
+          <div className="flex items-center gap-3">
+            <Type className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">Appearance</h2>
+          </div>
+
+          <div className="space-y-3">
+            <Label>Text Size</Label>
+            <p className="text-sm text-muted-foreground">
+              Make text smaller or larger for better readability on mobile, tablet, and desktop.
+            </p>
+            <RadioGroup
+              value={textScale}
+              onValueChange={(value) => {
+                const nextScale = normalizeTextScale(value);
+                setTextScale(nextScale);
+                applyTextScale(nextScale);
+                localStorage.setItem(TEXT_SCALE_STORAGE_KEY, nextScale);
+              }}
+              className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+            >
+              <Label
+                htmlFor="text-scale-compact"
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border p-3 text-sm font-medium hover:bg-secondary"
+              >
+                <RadioGroupItem value="compact" id="text-scale-compact" />
+                Compact
+              </Label>
+              <Label
+                htmlFor="text-scale-default"
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border p-3 text-sm font-medium hover:bg-secondary"
+              >
+                <RadioGroupItem value="default" id="text-scale-default" />
+                Default
+              </Label>
+              <Label
+                htmlFor="text-scale-large"
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border p-3 text-sm font-medium hover:bg-secondary"
+              >
+                <RadioGroupItem value="large" id="text-scale-large" />
+                Large
+              </Label>
+              <Label
+                htmlFor="text-scale-xlarge"
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border p-3 text-sm font-medium hover:bg-secondary"
+              >
+                <RadioGroupItem value="xlarge" id="text-scale-xlarge" />
+                Extra Large
+              </Label>
+            </RadioGroup>
+          </div>
+        </div>
+
         {/* Privacy Settings */}
         <div className="space-y-6 pt-6 border-t border-border">
           <div className="flex items-center gap-3">

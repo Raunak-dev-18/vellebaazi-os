@@ -261,7 +261,6 @@ export default function Bakaiti() {
   const [search, setSearch] = useState("");
   const [messageText, setMessageText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedGif, setSelectedGif] = useState<GifPick | null>(null);
   const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
   const [activeSends, setActiveSends] = useState(0);
   const [composerState, setComposerState] = useState<"idle" | "sending" | "done" | "error">("idle");
@@ -396,7 +395,6 @@ export default function Bakaiti() {
 
   useEffect(() => {
     setShowGifPicker(false);
-    setSelectedGif(null);
     setReplyTarget(null);
     setReactionTargetId(null);
     setForwardTarget(null);
@@ -1326,10 +1324,11 @@ export default function Bakaiti() {
     }
   };
 
-  const sendMessage = async () => {
+  const sendMessage = async (options?: { forcedGif?: GifPick; preserveText?: boolean }) => {
     if (!user || !selectedConversation) return;
 
-    const text = messageText.trim();
+    const rawComposerText = messageText;
+    const text = options?.forcedGif ? "" : rawComposerText.trim();
     const textValidation = parseChatMessage(text);
     if (!textValidation.success) {
       toast({
@@ -1342,8 +1341,8 @@ export default function Bakaiti() {
 
     const validatedText = textValidation.data;
     const draftConversation = selectedConversation;
-    const draftFile = selectedFile;
-    const draftGif = selectedGif;
+    const draftFile = options?.forcedGif ? null : selectedFile;
+    const draftGif = options?.forcedGif ?? null;
     const draftReply = replyTarget;
     const draftConversationKey = conversationKey;
     const draftE2eeActive = e2eeActive;
@@ -1442,9 +1441,12 @@ export default function Bakaiti() {
       ),
     );
 
-    setMessageText("");
-    setSelectedFile(null);
-    setSelectedGif(null);
+    if (!options?.preserveText) {
+      setMessageText("");
+    }
+    if (draftFile) {
+      setSelectedFile(null);
+    }
     setReplyTarget(null);
     setShowGifPicker(false);
     setTimeout(() => messageInputRef.current?.focus(), 0);
@@ -1769,8 +1771,8 @@ export default function Bakaiti() {
   const chatVisible = !isMobile || !!selectedConversation;
 
   return (
-    <div className="flex h-[calc(100vh-56px)] bg-background md:h-screen">
-      <div className={cn("border-r border-border md:w-96", listVisible ? "flex w-full flex-col" : "hidden")}>
+    <div className="flex h-[calc(100dvh-56px)] bg-background md:h-screen">
+      <div className={cn("border-r border-border md:w-[22rem] lg:w-96", listVisible ? "flex w-full flex-col" : "hidden")}>
         <div className="border-b border-border p-4">
           <h1 className="mb-4 text-xl font-semibold">{username}</h1>
           <div className="relative mb-3">
@@ -2082,9 +2084,7 @@ export default function Bakaiti() {
                 className="hidden"
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
                   setSelectedFile(e.target.files?.[0] || null);
-                  if (e.target.files?.[0]) {
-                    setSelectedGif(null);
-                  }
+
                 }}
               />
               {replyTarget && (
@@ -2111,34 +2111,6 @@ export default function Bakaiti() {
                   <Button variant="ghost" size="sm" onClick={() => setSelectedFile(null)}>Remove</Button>
                 </div>
               )}
-              {selectedGif && (
-                <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/70 p-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <img
-                      src={selectedGif.url}
-                      alt={selectedGif.title || "Selected GIF"}
-                      className="h-12 w-12 flex-shrink-0 rounded object-cover"
-                      loading="lazy"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        GIF
-                      </p>
-                      <p className="truncate text-xs">
-                        {selectedGif.title || "Selected GIF"}
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setSelectedGif(null)}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              )}
               {(activeSends > 0 || composerState === "done" || composerState === "error") && (
                 <div className="mb-2 flex items-center justify-between rounded-md border border-border/70 bg-secondary/40 px-2 py-1 text-[11px]">
                   {activeSends > 0 ? (
@@ -2158,9 +2130,8 @@ export default function Bakaiti() {
                   <GifPicker
                     apiKey={giphyApiKey}
                     onSelect={(gif) => {
-                      setSelectedGif(gif);
-                      setSelectedFile(null);
                       setShowGifPicker(false);
+                      void sendMessage({ forcedGif: gif, preserveText: true });
                     }}
                     onClose={() => setShowGifPicker(false)}
                   />
@@ -2192,7 +2163,7 @@ export default function Bakaiti() {
                   variant="ghost"
                   size="icon"
                   onClick={sendMessage}
-                  disabled={!messageText.trim() && !selectedFile && !selectedGif}
+                  disabled={!messageText.trim() && !selectedFile}
                 >
                   <Send className="h-5 w-5" />
                 </Button>

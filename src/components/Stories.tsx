@@ -496,7 +496,9 @@ export function Stories({
     initialStoryUserId,
     navigate,
     stories,
-    
+    viewerOnly,
+  ]);
+
   useEffect(() => {
     if (!viewerOnly || !initialStoryUserId || !initialStoryId) return;
     if (Object.keys(stories).length === 0) return;
@@ -825,18 +827,6 @@ export function Stories({
     initialStoryId,
     initialStoryUserId,
     navigate,
-    
-  useEffect(() => {
-    if (!viewerOnly || !initialStoryUserId || !initialStoryId) return;
-    if (Object.keys(stories).length === 0) return;
-    if (!stories[initialStoryUserId]?.length) {
-      navigate("/", { replace: true });
-    }
-  }, [
-    initialStoryId,
-    initialStoryUserId,
-    navigate,
-    stories,
     viewerOnly,
   ]);
 
@@ -1208,16 +1198,14 @@ export function Stories({
                       <div className="absolute bottom-0 right-0 bg-blue-500 rounded-full p-1">
                         <Plus className="h-3 w-3 text-white" />
                       </div>
-            </>
-          )}
+                    )}
                   </div>
                 </div>
                 <span className="text-xs max-w-[70px] truncate text-foreground">
                   Your story
                 </span>
               </div>
-            </>
-          )}
+            )}
 
             {/* Other Users' Stories */}
             {Object.entries(displayedStories)
@@ -1276,8 +1264,7 @@ export function Stories({
                 </div>
                 <span className="text-xs text-muted-foreground">Load more</span>
               </div>
-            </>
-          )}
+            )}
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
@@ -1390,8 +1377,7 @@ export function Stories({
                   </Button>
                 </div>
               </div>
-            </>
-          )}
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -1447,8 +1433,7 @@ export function Stories({
                   )}
                   <div className="absolute inset-0 bg-black/55" />
                 </div>
-            </>
-          )}
+            )}
 
               <div className="relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black">
               <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/75 via-black/30 to-transparent" />
@@ -1503,7 +1488,7 @@ export function Stories({
                   variant="ghost"
                   size="icon"
                   className="ml-auto h-8 w-8 text-white hover:bg-white/15"
-                  onClick={() => setIsViewDialogOpen(false)}
+                  onClick={() => (viewerOnly ? navigate("/") : setIsViewDialogOpen(false))}
                 >
                   <X className="h-5 w-5" />
                 </Button>
@@ -1654,7 +1639,7 @@ export function Stories({
                   </div>
                 ) : (
                   <div className="rounded-xl border border-white/15 bg-black/45 px-3 py-2 text-xs text-white/90 backdrop-blur-sm">
-                    Your story • {storyComments.length} comments • {totalStoryReactions} reactions
+                    Your story - {storyComments.length} comments - {totalStoryReactions} reactions
                   </div>
                 )}
               </div>
@@ -1674,7 +1659,7 @@ export function Stories({
           </DialogHeader>
 
           <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-            {totalStoryReactions} reactions · {storyComments.length} comments
+            {totalStoryReactions} reactions - {storyComments.length} comments
           </div>
 
           <ScrollArea className="h-72 rounded-md border border-border p-2">
@@ -1705,8 +1690,7 @@ export function Stories({
                   </div>
                 ))}
               </div>
-            </>
-          )}
+            )}
           </ScrollArea>
 
           <div className="flex items-center gap-2">
@@ -1743,6 +1727,16 @@ export function Stories({
     </>
   );
 }
+
+
+
+
+
+
+
+
+
+
 
 
 
