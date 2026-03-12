@@ -112,7 +112,7 @@ export function PostCard({
   const [comments, setComments] = useState<CommentView[]>([]);
   const [showComments, setShowComments] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
   const [showLikesModal, setShowLikesModal] = useState(false);
   const [likedUsers, setLikedUsers] = useState<LikedUser[]>([]);
   const [allLikedUsers, setAllLikedUsers] = useState<LikedUser[]>([]);
@@ -1063,4 +1063,5 @@ export function PostCard({
     </div>
   );
 }
+
 

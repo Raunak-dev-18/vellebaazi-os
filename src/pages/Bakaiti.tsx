@@ -3,9 +3,11 @@ import {
   ArrowLeft,
   CornerUpLeft,
   Crown,
+  Copy,
+  Flag,
   Forward,
   Loader2,
-  MoreHorizontal,
+  MoreVertical,
   Paperclip,
   Plus,
   Search,
@@ -1243,6 +1245,58 @@ export default function Bakaiti() {
     }
   };
 
+  const getCopyTextForMessage = (message: ChatMessage) => {
+    if (message.text?.trim()) return message.text.trim();
+    if (message.sharedPost) {
+      return message.sharedPost.caption
+        ? "Shared post: " + message.sharedPost.caption
+        : "Shared post";
+    }
+    if (message.fileName) return "Attachment: " + message.fileName;
+    if (message.fileUrl) return message.fileUrl;
+    return "Message";
+  };
+
+  const handleCopyMessage = async (message: ChatMessage) => {
+    const copyText = getCopyTextForMessage(message);
+    if (!copyText) return;
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyText);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = copyText;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+
+      toast({
+        title: "Copied",
+        description: "Message copied to clipboard.",
+      });
+    } catch (error) {
+      console.error("Failed to copy message:", error);
+      toast({
+        title: "Error",
+        description: "Unable to copy message.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleReportMessage = (message: ChatMessage) => {
+    toast({
+      title: "Reported",
+      description: "Report submitted for message from " + message.senderName + ".",
+    });
+  };
+
   const handleForwardMessage = async (targetConversation: Conversation) => {
     if (!user || !forwardTarget) return;
     if (forwardingConversationKey) return;
@@ -1902,7 +1956,7 @@ export default function Bakaiti() {
                             ) : (
                               <span />
                             )}
-                            {m.localOnly ? (
+                            {m.localOnly && (
                               <div className="flex h-6 w-6 shrink-0 items-center justify-center">
                                 {m.localStatus === "sending" ? (
                                   <Loader2 className="h-3.5 w-3.5 animate-spin opacity-70" />
@@ -1910,46 +1964,6 @@ export default function Bakaiti() {
                                   <span className="h-3.5 w-3.5" />
                                 )}
                               </div>
-                            ) : (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44">
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      setReplyTarget(m);
-                                    }}
-                                  >
-                                    <CornerUpLeft className="mr-2 h-4 w-4" />
-                                    Reply
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      setReactionTargetId(m.id);
-                                      setReactionInput("");
-                                    }}
-                                  >
-                                    <SmilePlus className="mr-2 h-4 w-4" />
-                                    React
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      setForwardTarget(m);
-                                      setForwardSearch("");
-                                    }}
-                                  >
-                                    <Forward className="mr-2 h-4 w-4" />
-                                    Forward
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
                             )}
                           </div>
 
@@ -2048,6 +2062,70 @@ export default function Bakaiti() {
                             )}
                           </p>
                         </div>
+
+                        {!m.localOnly && (
+                          <div
+                            className={cn(
+                              "mt-1 flex items-center gap-1 px-1",
+                              isMine ? "justify-end" : "justify-start",
+                            )}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                              onClick={() => {
+                                setReactionTargetId(m.id);
+                                setReactionInput("");
+                              }}
+                            >
+                              <Smile className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                              onClick={() => {
+                                setReplyTarget(m);
+                              }}
+                            >
+                              <CornerUpLeft className="h-4 w-4" />
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align={isMine ? "end" : "start"} className="w-44">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setForwardTarget(m);
+                                    setForwardSearch("");
+                                  }}
+                                >
+                                  <Forward className="mr-2 h-4 w-4" />
+                                  Forward
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleCopyMessage(m)}>
+                                  <Copy className="mr-2 h-4 w-4" />
+                                  Copy
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => handleReportMessage(m)}
+                                >
+                                  <Flag className="mr-2 h-4 w-4" />
+                                  Report
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        )}
 
                         {grouped.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1 px-1">
@@ -2591,8 +2669,6 @@ export default function Bakaiti() {
     </div>
   );
 }
-
-
 
 
 

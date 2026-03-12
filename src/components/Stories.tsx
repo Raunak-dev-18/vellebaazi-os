@@ -1404,9 +1404,10 @@ export function Stories({
         }}
       >
         <DialogContent
+          data-story-viewer={viewerOnly ? "true" : undefined}
           className={
             viewerOnly
-              ? "relative flex h-screen w-screen items-center justify-center border-0 bg-black/80 p-2 shadow-none sm:max-w-none sm:p-4"
+              ? "h-screen w-screen max-w-none border-0 bg-black/85 p-0 shadow-none sm:rounded-none"
               : "border-0 bg-transparent p-0 shadow-none sm:max-w-[420px]"
           }
         >
@@ -1435,7 +1436,7 @@ export function Stories({
                 </div>
             )}
 
-              <div className="relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black">
+              <div className={viewerOnly ? "relative mx-auto w-[92vw] max-w-[420px] aspect-[9/16] overflow-hidden rounded-3xl border border-white/10 bg-black" : "relative mx-auto aspect-[9/16] max-h-[90vh] overflow-hidden rounded-3xl border border-white/10 bg-black"}>
               <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/75 via-black/30 to-transparent" />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-36 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
 
@@ -1727,6 +1728,9 @@ export function Stories({
     </>
   );
 }
+
+
+
 
 
 

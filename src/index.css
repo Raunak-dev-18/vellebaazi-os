@@ -147,3 +147,28 @@ All colors MUST be HSL.
     --app-fluid-root: clamp(14px, 0.5vw + 13px, 15px);
   }
 }
+[data-story-viewer="true"] {
+  position: fixed !important;
+  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transform: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+[data-story-viewer="true"][data-state="open"],
+[data-story-viewer="true"][data-state="closed"] {
+  animation: none !important;
+}
+
+[data-story-viewer="true"] > button {
+  display: none !important;
+}
