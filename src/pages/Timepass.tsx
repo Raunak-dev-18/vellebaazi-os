@@ -7,6 +7,7 @@ import {
   VolumeX,
   Music,
   MoreHorizontal,
+  Smile,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { useNavigate } from "react-router-dom";
 import { MentionText } from "@/components/MentionText";
 import { MentionInput } from "@/components/MentionInput";
 import { getSafeAvatarUrl } from "@/utils/media";
+import { GifPicker, type GifPick } from "@/components/chat/GifPicker";
 
 interface Post {
   id: string;
@@ -51,6 +53,11 @@ interface LikeEntry {
   createdAt: number;
 }
 
+interface StickerData {
+  url: string;
+  title?: string;
+}
+
 interface ReplyData {
   userId: string;
   username: string;
@@ -58,6 +65,7 @@ interface ReplyData {
   text: string;
   createdAt: number;
   replyTo?: string;
+  sticker?: StickerData;
   likes?: Record<string, LikeEntry>;
 }
 
@@ -67,6 +75,7 @@ interface CommentData {
   userAvatar?: string;
   text: string;
   createdAt: number;
+  sticker?: StickerData;
   likes?: Record<string, LikeEntry>;
   replies?: Record<string, ReplyData>;
 }
@@ -111,7 +120,13 @@ export default function Timepass() {
   const [expandedReplies, setExpandedReplies] = useState<Set<string>>(
     new Set(),
   );
+  const [selectedCommentSticker, setSelectedCommentSticker] =
+    useState<GifPick | null>(null);
+  const [showCommentStickerPicker, setShowCommentStickerPicker] =
+    useState(false);
   const commentInputRef = useRef<HTMLInputElement>(null);
+  const giphyApiKey =
+    (import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || undefined;
 
   const fetchPosts = useCallback(async () => {
     try {
@@ -332,6 +347,8 @@ export default function Timepass() {
     setCommentsDisplayed(10);
     setHasMoreComments(false);
     setNewComment("");
+    setSelectedCommentSticker(null);
+    setShowCommentStickerPicker(false);
     setReplyingTo(null);
     setExpandedReplies(new Set());
     setLikedComments(new Set());
@@ -462,14 +479,21 @@ export default function Timepass() {
   };
 
   const handleAddComment = async () => {
-    if (!user || !selectedPostId || !newComment.trim()) return;
+    if (!user || !selectedPostId) return;
 
     try {
       const db = getDatabase();
       const commentText = newComment.trim();
+      if (!commentText && !selectedCommentSticker) return;
+
+      const stickerPayload = selectedCommentSticker
+        ? {
+            url: selectedCommentSticker.url,
+            title: selectedCommentSticker.title || "Sticker",
+          }
+        : undefined;
 
       if (replyingTo) {
-        // This is a reply
         const repliesRef = ref(
           db,
           `comments/${selectedPostId}/${replyingTo.commentId}/replies`,
@@ -485,12 +509,12 @@ export default function Timepass() {
           text: commentText,
           createdAt: Date.now(),
           replyTo: replyingTo.username,
+          ...(stickerPayload ? { sticker: stickerPayload } : {}),
         });
 
         setExpandedReplies((prev) => new Set(prev).add(replyingTo.commentId));
         setReplyingTo(null);
       } else {
-        // This is a new comment
         const commentsRef = ref(db, `comments/${selectedPostId}`);
         const newCommentRef = push(commentsRef);
 
@@ -502,9 +526,9 @@ export default function Timepass() {
             `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
           text: commentText,
           createdAt: Date.now(),
+          ...(stickerPayload ? { sticker: stickerPayload } : {}),
         });
 
-        // Update comment count
         const post = posts.find((p) => p.id === selectedPostId);
         if (post) {
           await runTransaction(
@@ -516,6 +540,8 @@ export default function Timepass() {
       }
 
       setNewComment("");
+      setSelectedCommentSticker(null);
+      setShowCommentStickerPicker(false);
       await fetchComments(selectedPostId);
     } catch (error) {
       console.error("Error adding comment:", error);
@@ -813,8 +839,24 @@ export default function Timepass() {
                                   </span>
                                 </div>
                                 <p className="text-sm mt-1">
-                                  <MentionText text={comment.text} />
+                                  {comment.text ? (
+                                    <MentionText text={comment.text} />
+                                  ) : (
+                                    <span className="text-muted-foreground">
+                                      sent a sticker
+                                    </span>
+                                  )}
                                 </p>
+                                {comment.sticker?.url && (
+                                  <div className="mt-2 w-28 overflow-hidden rounded-xl border border-border/60 bg-secondary/40 p-1">
+                                    <img
+                                      src={comment.sticker.url}
+                                      alt={comment.sticker.title || "Sticker"}
+                                      className="h-24 w-full rounded-lg object-cover"
+                                      loading="lazy"
+                                    />
+                                  </div>
+                                )}
                                 <div className="flex items-center gap-3 mt-2">
                                   <span className="text-xs text-muted-foreground">
                                     {formatTimeAgo(comment.createdAt)}
@@ -903,8 +945,24 @@ export default function Timepass() {
                                             <span className="font-semibold mr-2">
                                               {reply.username}
                                             </span>
-                                            <MentionText text={reply.text} />
+                                            {reply.text ? (
+                                              <MentionText text={reply.text} />
+                                            ) : (
+                                              <span className="text-muted-foreground">
+                                                sent a sticker
+                                              </span>
+                                            )}
                                           </p>
+                                          {reply.sticker?.url && (
+                                            <div className="mt-2 w-24 overflow-hidden rounded-xl border border-border/60 bg-secondary/40 p-1">
+                                              <img
+                                                src={reply.sticker.url}
+                                                alt={reply.sticker.title || "Sticker"}
+                                                className="h-20 w-full rounded-lg object-cover"
+                                                loading="lazy"
+                                              />
+                                            </div>
+                                          )}
                                           <div className="flex items-center gap-3 mt-1">
                                             <span className="text-xs text-muted-foreground">
                                               {formatTimeAgo(reply.createdAt)}
@@ -978,6 +1036,7 @@ export default function Timepass() {
                           onClick={() => {
                             setReplyingTo(null);
                             setNewComment("");
+                            setSelectedCommentSticker(null);
                           }}
                           className="text-xs text-muted-foreground hover:text-foreground"
                         >
@@ -985,7 +1044,46 @@ export default function Timepass() {
                         </button>
                       </div>
                     )}
-                    <div className="flex gap-2">
+                    {selectedCommentSticker && (
+                      <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/70 p-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <img
+                            src={selectedCommentSticker.url}
+                            alt={selectedCommentSticker.title || "Selected sticker"}
+                            className="h-10 w-10 flex-shrink-0 rounded object-cover"
+                            loading="lazy"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              Sticker
+                            </p>
+                            <p className="truncate text-xs">
+                              {selectedCommentSticker.title || "Selected sticker"}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setSelectedCommentSticker(null)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                    <div className="relative flex gap-2">
+                      {showCommentStickerPicker && (
+                        <GifPicker
+                          apiKey={giphyApiKey}
+                          onSelect={(gif) => {
+                            setSelectedCommentSticker(gif);
+                            setShowCommentStickerPicker(false);
+                          }}
+                          onClose={() => setShowCommentStickerPicker(false)}
+                        />
+                      )}
                       <Avatar className="h-8 w-8">
                         <AvatarImage
                           src={getSafeAvatarUrl(
@@ -998,6 +1096,17 @@ export default function Timepass() {
                           {user?.displayName?.[0] || "U"}
                         </AvatarFallback>
                       </Avatar>
+                      <Button
+                        type="button"
+                        variant={showCommentStickerPicker ? "secondary" : "ghost"}
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() =>
+                          setShowCommentStickerPicker((prev) => !prev)
+                        }
+                      >
+                        <Smile className="h-4 w-4" />
+                      </Button>
                       <MentionInput
                         ref={commentInputRef}
                         placeholder={
@@ -1017,7 +1126,7 @@ export default function Timepass() {
                       />
                       <Button
                         onClick={handleAddComment}
-                        disabled={!newComment.trim()}
+                        disabled={!newComment.trim() && !selectedCommentSticker}
                         size="sm"
                       >
                         Post
@@ -1033,3 +1142,4 @@ export default function Timepass() {
     </>
   );
 }
+

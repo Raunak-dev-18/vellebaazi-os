@@ -5,6 +5,7 @@ import {
   Bookmark,
   Volume2,
   VolumeX,
+  Smile,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import { MentionInput } from "@/components/MentionInput";
 import { getSafeAvatarUrl } from "@/utils/media";
 import { sendMentionNotifications } from "@/utils/mentionNotifications";
 import { SharePostDialog } from "@/components/chat/SharePostDialog";
+import { GifPicker, type GifPick } from "@/components/chat/GifPicker";
 
 interface PostCardProps {
   id: string;
@@ -45,6 +47,11 @@ interface LikeEntry {
   createdAt: number;
 }
 
+interface StickerData {
+  url: string;
+  title?: string;
+}
+
 interface ReplyData {
   userId: string;
   username: string;
@@ -52,6 +59,7 @@ interface ReplyData {
   text: string;
   createdAt: number;
   replyTo?: string;
+  sticker?: StickerData;
   likes?: Record<string, LikeEntry>;
 }
 
@@ -61,6 +69,7 @@ interface CommentData {
   userAvatar?: string;
   text: string;
   createdAt: number;
+  sticker?: StickerData;
   likes?: Record<string, LikeEntry>;
   replies?: Record<string, ReplyData>;
 }
@@ -122,10 +131,14 @@ export function PostCard({
   const [expandedReplies, setExpandedReplies] = useState<Set<string>>(
     new Set(),
   );
+  const [selectedSticker, setSelectedSticker] = useState<GifPick | null>(null);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [mediaError, setMediaError] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
+  const giphyApiKey =
+    (import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || undefined;
 
   const isVideoUrl = (url: string) => {
     const lower = url.toLowerCase();
@@ -444,19 +457,24 @@ export function PostCard({
 
   const handleComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !comment.trim()) return;
+    const commentText = comment.trim();
+    if (!user || (!commentText && !selectedSticker)) return;
 
     setIsSubmitting(true);
     try {
       const db = getDatabase();
-      const commentText = comment.trim();
       const actorUsername = user.displayName || user.email?.split("@")[0] || "user";
       const actorAvatar =
         user.photoURL ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`;
+      const stickerPayload = selectedSticker
+        ? {
+            url: selectedSticker.url,
+            title: selectedSticker.title || "Sticker",
+          }
+        : undefined;
 
       if (replyingTo) {
-        // This is a reply to a comment
         const repliesRef = ref(
           db,
           `comments/${id}/${replyingTo.commentId}/replies`,
@@ -470,6 +488,7 @@ export function PostCard({
           text: commentText,
           createdAt: Date.now(),
           replyTo: replyingTo.username,
+          ...(stickerPayload ? { sticker: stickerPayload } : {}),
         };
 
         await set(newReplyRef, newReply);
@@ -486,11 +505,9 @@ export function PostCard({
           });
         }
 
-        // Expand replies for this comment
         setExpandedReplies((prev) => new Set(prev).add(replyingTo.commentId));
         setReplyingTo(null);
       } else {
-        // This is a new comment
         const commentsRef = ref(db, `comments/${id}`);
         const newCommentRef = push(commentsRef);
 
@@ -500,6 +517,7 @@ export function PostCard({
           userAvatar: actorAvatar,
           text: commentText,
           createdAt: Date.now(),
+          ...(stickerPayload ? { sticker: stickerPayload } : {}),
         };
 
         await set(newCommentRef, newComment);
@@ -522,6 +540,8 @@ export function PostCard({
       }
 
       setComment("");
+      setSelectedSticker(null);
+      setShowStickerPicker(false);
       fetchComments();
     } catch (error: unknown) {
       console.error("Error posting comment:", error);
@@ -534,6 +554,7 @@ export function PostCard({
       setIsSubmitting(false);
     }
   };
+
 
   return (
     <div className="border border-border rounded-lg bg-card mb-6">
@@ -691,8 +712,24 @@ export function PostCard({
                       <span className="font-semibold mr-2">
                         {commentItem.username}
                       </span>
-                      <MentionText text={commentItem.text} />
+                      {commentItem.text ? (
+                        <MentionText text={commentItem.text} />
+                      ) : (
+                        <span className="text-muted-foreground">
+                          sent a sticker
+                        </span>
+                      )}
                     </p>
+                    {commentItem.sticker?.url && (
+                      <div className="mt-2 w-28 overflow-hidden rounded-xl border border-border/60 bg-secondary/40 p-1">
+                        <img
+                          src={commentItem.sticker.url}
+                          alt={commentItem.sticker.title || "Sticker"}
+                          className="h-24 w-full rounded-lg object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 mt-1">
                       <span className="text-xs text-muted-foreground">
                         {formatTimeAgo(commentItem.createdAt)}
@@ -763,8 +800,24 @@ export function PostCard({
                                 <span className="font-semibold mr-2">
                                   {reply.username}
                                 </span>
-                                <MentionText text={reply.text} />
+                                {reply.text ? (
+                                  <MentionText text={reply.text} />
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    sent a sticker
+                                  </span>
+                                )}
                               </p>
+                              {reply.sticker?.url && (
+                                <div className="mt-2 w-24 overflow-hidden rounded-xl border border-border/60 bg-secondary/40 p-1">
+                                  <img
+                                    src={reply.sticker.url}
+                                    alt={reply.sticker.title || "Sticker"}
+                                    className="h-20 w-full rounded-lg object-cover"
+                                    loading="lazy"
+                                  />
+                                </div>
+                              )}
                               <div className="flex items-center gap-3 mt-1">
                                 <span className="text-xs text-muted-foreground">
                                   {formatTimeAgo(reply.createdAt)}
@@ -836,6 +889,7 @@ export function PostCard({
                 onClick={() => {
                   setReplyingTo(null);
                   setComment("");
+                  setSelectedSticker(null);
                 }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
@@ -843,7 +897,56 @@ export function PostCard({
               </button>
             </div>
           )}
-          <form onSubmit={handleComment} className="flex items-center gap-2">
+          {selectedSticker && (
+            <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/70 p-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <img
+                  src={selectedSticker.url}
+                  alt={selectedSticker.title || "Selected sticker"}
+                  className="h-10 w-10 flex-shrink-0 rounded object-cover"
+                  loading="lazy"
+                />
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Sticker
+                  </p>
+                  <p className="truncate text-xs">
+                    {selectedSticker.title || "Selected sticker"}
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setSelectedSticker(null)}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
+          <form onSubmit={handleComment} className="relative flex items-center gap-2">
+            {showStickerPicker && (
+              <GifPicker
+                apiKey={giphyApiKey}
+                onSelect={(gif) => {
+                  setSelectedSticker(gif);
+                  setShowStickerPicker(false);
+                }}
+                onClose={() => setShowStickerPicker(false)}
+              />
+            )}
+            <Button
+              type="button"
+              variant={showStickerPicker ? "secondary" : "ghost"}
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setShowStickerPicker((prev) => !prev)}
+              disabled={isSubmitting}
+            >
+              <Smile className="h-4 w-4" />
+            </Button>
             <MentionInput
               ref={commentInputRef}
               placeholder={
@@ -860,7 +963,7 @@ export function PostCard({
               type="submit"
               variant="ghost"
               size="sm"
-              disabled={!comment.trim() || isSubmitting}
+              disabled={(!comment.trim() && !selectedSticker) || isSubmitting}
               className="text-blue-500 hover:text-blue-600 font-semibold"
             >
               {isSubmitting ? "Posting..." : "Post"}
@@ -960,3 +1063,4 @@ export function PostCard({
     </div>
   );
 }
+
