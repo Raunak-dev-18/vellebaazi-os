@@ -2066,7 +2066,7 @@ export default function Bakaiti() {
                         {!m.localOnly && (
                           <div
                             className={cn(
-                              "mt-1 flex items-center gap-1 px-1",
+                              "mt-1 flex max-h-0 items-center gap-1 overflow-hidden px-1 opacity-0 pointer-events-none transition-all duration-150 group-hover:max-h-8 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:max-h-8 group-focus-within:opacity-100 group-focus-within:pointer-events-auto",
                               isMine ? "justify-end" : "justify-start",
                             )}
                           >
@@ -2189,14 +2189,9 @@ export default function Bakaiti() {
                   <Button variant="ghost" size="sm" onClick={() => setSelectedFile(null)}>Remove</Button>
                 </div>
               )}
-              {(activeSends > 0 || composerState === "done" || composerState === "error") && (
+              {(composerState === "done" || composerState === "error") && (
                 <div className="mb-2 flex items-center justify-between rounded-md border border-border/70 bg-secondary/40 px-2 py-1 text-[11px]">
-                  {activeSends > 0 ? (
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Sending in background ({activeSends})
-                    </div>
-                  ) : composerState === "done" ? (
+                  {composerState === "done" ? (
                     <span className="text-emerald-500">Done</span>
                   ) : (
                     <span className="text-destructive">Some messages failed</span>
@@ -2669,6 +2664,4 @@ export default function Bakaiti() {
     </div>
   );
 }
-
-
 
