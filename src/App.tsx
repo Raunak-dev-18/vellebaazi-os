@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { MobileTopBar } from "@/components/MobileTopBar";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { cn } from "@/lib/utils";
 
 // Lazy load pages for better performance
 const Home = lazy(() => import("./pages/Home"));
@@ -84,6 +85,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   const { user, loading } = useAuth();
+  const location = useLocation();
+  const hideMobileBottomNav = location.pathname.startsWith("/bakaiti");
 
   if (loading) {
     return <SplashScreen />;
@@ -115,7 +118,7 @@ function AppContent() {
                   <main className="relative flex min-h-screen flex-1 flex-col overflow-x-hidden">
                     <MobileTopBar />
                     <Suspense fallback={<PageLoader />}>
-                      <div className="flex-1 pb-20 md:pb-0">
+                      <div className={cn("flex-1 md:pb-0", hideMobileBottomNav ? "pb-0" : "pb-20")}>
                         <Routes>
                           <Route path="/" element={<Home />} />
                           <Route path="/timepass" element={<Timepass />} />
@@ -136,7 +139,7 @@ function AppContent() {
                         </Routes>
                       </div>
                     </Suspense>
-                    <MobileBottomNav />
+                    {!hideMobileBottomNav && <MobileBottomNav />}
                   </main>
                 </div>
               </SidebarProvider>
@@ -170,5 +173,4 @@ const App = () => {
 };
 
 export default App;
-
 

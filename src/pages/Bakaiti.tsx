@@ -733,8 +733,18 @@ export default function Bakaiti() {
   }, [blockedByMe, blockedMe, resolveConversationParticipants, selectedConversation, user]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [displayedMessages]);
+    const scrollTarget = endRef.current;
+    if (!scrollTarget) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollTarget.scrollIntoView({
+        behavior: isMobile ? "auto" : "smooth",
+        block: "end",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayedMessages, isMobile]);
 
   useEffect(() => {
     const open = location.state?.openChatWith;
@@ -1825,7 +1835,7 @@ export default function Bakaiti() {
   const chatVisible = !isMobile || !!selectedConversation;
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] bg-background md:h-screen">
+    <div className="flex h-[calc(100dvh-56px)] touch-pan-y overscroll-none bg-background md:h-screen">
       <div className={cn("border-r border-border md:w-[22rem] lg:w-96", listVisible ? "flex w-full flex-col" : "hidden")}>
         <div className="border-b border-border p-4">
           <h1 className="mb-4 text-xl font-semibold">{username}</h1>
@@ -1837,7 +1847,7 @@ export default function Bakaiti() {
             <Users className="h-4 w-4" /> Create Group
           </Button>
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 overscroll-contain">
           {loading ? (
             <div className="p-6 text-center text-muted-foreground">Loading conversations...</div>
           ) : filteredConversations.length === 0 ? (
@@ -1909,7 +1919,7 @@ export default function Bakaiti() {
               )}
             </div>
 
-            <ScrollArea className="flex-1 p-4">
+            <ScrollArea className="flex-1 overscroll-contain p-3 md:p-4">
               <div className="space-y-3">
                 {displayedMessages.map((m) => {
                   if (m.senderId === "system") {
@@ -1939,12 +1949,12 @@ export default function Bakaiti() {
                   return (
                     <div
                       key={m.id}
-                      className={cn("flex transition-all duration-200", isMine ? "justify-end" : "justify-start")}
+                      className={cn("flex transition-all duration-150 motion-reduce:transition-none", isMine ? "justify-end" : "justify-start")}
                     >
                       <div className="group max-w-[80%]">
                         <div
                           className={cn(
-                            "rounded-2xl px-3 py-2 shadow-sm transition-all duration-200",
+                            "rounded-2xl px-3 py-2 shadow-sm transition-all duration-150 motion-reduce:transition-none",
                             isMine ? "bg-primary text-primary-foreground" : "bg-secondary",
                           )}
                         >
@@ -1985,6 +1995,8 @@ export default function Bakaiti() {
                             <img
                               src={m.fileUrl}
                               alt={m.fileName || "Image"}
+                              loading="lazy"
+                              decoding="async"
                               className="mb-2 max-h-64 rounded-lg object-cover"
                               onClick={() => setFullImage(m.fileUrl || null)}
                             />
@@ -2027,6 +2039,8 @@ export default function Bakaiti() {
                                   <img
                                     src={m.sharedPost.mediaUrl}
                                     alt="Shared post"
+                                    loading="lazy"
+                                    decoding="async"
                                     className="h-14 w-14 rounded-md object-cover"
                                     onClick={() => setFullImage(m.sharedPost?.mediaUrl || null)}
                                   />
@@ -2066,7 +2080,7 @@ export default function Bakaiti() {
                         {!m.localOnly && (
                           <div
                             className={cn(
-                              "mt-1 flex max-h-0 items-center gap-1 overflow-hidden px-1 opacity-0 pointer-events-none transition-all duration-150 group-hover:max-h-8 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:max-h-8 group-focus-within:opacity-100 group-focus-within:pointer-events-auto",
+                              "mt-1 flex items-center gap-1 px-1 transition-all duration-150 md:max-h-0 md:overflow-hidden md:opacity-0 md:pointer-events-none md:group-hover:max-h-8 md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:max-h-8 md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto",
                               isMine ? "justify-end" : "justify-start",
                             )}
                           >
@@ -2154,7 +2168,7 @@ export default function Bakaiti() {
               </div>
             </ScrollArea>
 
-            <div className="border-t border-border p-3">
+            <div className="border-t border-border bg-background/95 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur supports-[backdrop-filter]:bg-background/80 md:p-3">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2664,4 +2678,5 @@ export default function Bakaiti() {
     </div>
   );
 }
+
 
