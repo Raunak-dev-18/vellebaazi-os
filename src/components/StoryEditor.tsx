@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { MentionInput } from "@/components/MentionInput";
 import { extractMentions } from "@/utils/mentions";
+import { GifPicker, type GifPick } from "@/components/chat/GifPicker";
 import {
-  X, Type, Smile, Sticker, Palette, Pencil, Undo, Download,
-  AlignLeft, AlignCenter, AlignRight, Bold, Italic, ChevronLeft, ChevronRight
+  X, Type, Smile, Palette, Pencil, Undo,
+  AlignLeft, AlignCenter, AlignRight, Bold, Italic
 } from "lucide-react";
 
 // Filter presets
@@ -66,7 +67,10 @@ interface TextOverlay {
 
 interface StickerOverlay {
   id: string;
-  emoji: string;
+  kind: "emoji" | "media";
+  emoji?: string;
+  mediaUrl?: string;
+  mediaTitle?: string;
   x: number;
   y: number;
   size: number;
@@ -95,7 +99,6 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
   
   // Text overlays
   const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
-  const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [newText, setNewText] = useState("");
   const [textColor, setTextColor] = useState("#FFFFFF");
   const [textBgColor, setTextBgColor] = useState("transparent");
@@ -107,6 +110,15 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
   
   // Sticker overlays
   const [stickerOverlays, setStickerOverlays] = useState<StickerOverlay[]>([]);
+  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+  const [resizingSticker, setResizingSticker] = useState<{
+    id: string;
+    startDistance: number;
+    startSize: number;
+    centerClientX: number;
+    centerClientY: number;
+  } | null>(null);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   
   // Drawing
   const [isDrawing, setIsDrawing] = useState(false);
@@ -128,6 +140,7 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
   const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
 
   const isVideo = file.type.startsWith("video/");
+  const giphyApiKey = (import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || undefined;
 
   // Redraw the drawing canvas whenever paths change
   useEffect(() => {
@@ -215,63 +228,122 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
 
   // Add sticker overlay
   const addStickerOverlay = (emoji: string) => {
+    const id = Date.now().toString();
     const newSticker: StickerOverlay = {
-      id: Date.now().toString(),
+      id,
+      kind: "emoji",
       emoji,
       x: 50,
       y: 50,
       size: 48,
       rotation: 0
     };
-    
+
     setStickerOverlays(prev => [...prev, newSticker]);
+    setSelectedStickerId(id);
+  };
+
+  const addGifStickerOverlay = (gif: GifPick) => {
+    const id = Date.now().toString();
+    const newSticker: StickerOverlay = {
+      id,
+      kind: "media",
+      mediaUrl: gif.url,
+      mediaTitle: gif.title || "Sticker",
+      x: 50,
+      y: 50,
+      size: 110,
+      rotation: 0
+    };
+
+    setStickerOverlays(prev => [...prev, newSticker]);
+    setSelectedStickerId(id);
+    setShowGifPicker(false);
   };
 
   // Handle mouse/touch events for dragging
   const handleMouseDown = (e: React.MouseEvent, type: "text" | "sticker", id: string) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    
-    const item = type === "text" 
+
+    const item = type === "text"
       ? textOverlays.find(t => t.id === id)
       : stickerOverlays.find(s => s.id === id);
-    
+
     if (!item) return;
-    
+
     const mouseX = ((e.clientX - rect.left) / rect.width) * 100;
     const mouseY = ((e.clientY - rect.top) / rect.height) * 100;
-    
+
+    if (type === "sticker") {
+      setSelectedStickerId(id);
+    }
+    setResizingSticker(null);
     setDraggingItem({ type, id });
     setDragOffset({ x: mouseX - item.x, y: mouseY - item.y });
   };
 
+  const handleStickerResizeStart = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    const sticker = stickerOverlays.find((entry) => entry.id === id);
+    if (!rect || !sticker) return;
+
+    const centerClientX = rect.left + (sticker.x / 100) * rect.width;
+    const centerClientY = rect.top + (sticker.y / 100) * rect.height;
+    const startDistance = Math.max(1, Math.hypot(e.clientX - centerClientX, e.clientY - centerClientY));
+
+    setDraggingItem(null);
+    setSelectedStickerId(id);
+    setResizingSticker({
+      id,
+      startDistance,
+      startSize: sticker.size,
+      centerClientX,
+      centerClientY,
+    });
+  };
+
   const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (resizingSticker) {
+      const distance = Math.max(1, Math.hypot(e.clientX - resizingSticker.centerClientX, e.clientY - resizingSticker.centerClientY));
+      const ratio = distance / resizingSticker.startDistance;
+      const nextSize = Math.max(28, Math.min(240, resizingSticker.startSize * ratio));
+      setStickerOverlays(prev => prev.map(s =>
+        s.id === resizingSticker.id ? { ...s, size: nextSize } : s
+      ));
+      return;
+    }
+
     if (!draggingItem || !containerRef.current) return;
-    
+
     const rect = containerRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100 - dragOffset.x));
     const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100 - dragOffset.y));
-    
+
     if (draggingItem.type === "text") {
-      setTextOverlays(prev => prev.map(t => 
+      setTextOverlays(prev => prev.map(t =>
         t.id === draggingItem.id ? { ...t, x, y } : t
       ));
     } else {
-      setStickerOverlays(prev => prev.map(s => 
+      setStickerOverlays(prev => prev.map(s =>
         s.id === draggingItem.id ? { ...s, x, y } : s
       ));
     }
-  }, [draggingItem, dragOffset]);
+  }, [draggingItem, dragOffset, resizingSticker]);
 
   const handleMouseUp = useCallback(() => {
     setDraggingItem(null);
+    setResizingSticker(null);
   }, []);
 
   useEffect(() => {
-    if (draggingItem) {
+    if (draggingItem || resizingSticker) {
       window.addEventListener("mousemove", handleMouseMove);
       window.addEventListener("mouseup", handleMouseUp);
       return () => {
@@ -279,7 +351,7 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
         window.removeEventListener("mouseup", handleMouseUp);
       };
     }
-  }, [draggingItem, handleMouseMove, handleMouseUp]);
+  }, [draggingItem, resizingSticker, handleMouseMove, handleMouseUp]);
 
   // Drawing handlers
   const getMousePosition = (e: React.MouseEvent) => {
@@ -331,6 +403,7 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
       setDrawPaths(prev => prev.slice(0, -1));
     } else if (stickerOverlays.length > 0) {
       setStickerOverlays(prev => prev.slice(0, -1));
+      setSelectedStickerId(null);
     } else if (textOverlays.length > 0) {
       setTextOverlays(prev => prev.slice(0, -1));
     }
@@ -339,12 +412,12 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
   // Delete text overlay
   const deleteTextOverlay = (id: string) => {
     setTextOverlays(prev => prev.filter(t => t.id !== id));
-    setEditingTextId(null);
   };
 
   // Delete sticker overlay
   const deleteStickerOverlay = (id: string) => {
     setStickerOverlays(prev => prev.filter(s => s.id !== id));
+    setSelectedStickerId(prev => (prev === id ? null : prev));
   };
 
   // Export edited image
@@ -452,20 +525,37 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
     });
 
     // Draw stickers
-    stickerOverlays.forEach(sticker => {
+    for (const sticker of stickerOverlays) {
       const x = (sticker.x / 100) * canvas.width;
       const y = (sticker.y / 100) * canvas.height;
       const size = sticker.size * 3;
-      
+
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate((sticker.rotation * Math.PI) / 180);
-      ctx.font = `${size}px serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(sticker.emoji, 0, 0);
+
+      if (sticker.kind === "media" && sticker.mediaUrl) {
+        try {
+          const stickerImage = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const media = new Image();
+            media.crossOrigin = "anonymous";
+            media.onload = () => resolve(media);
+            media.onerror = reject;
+            media.src = sticker.mediaUrl as string;
+          });
+          ctx.drawImage(stickerImage, -size / 2, -size / 2, size, size);
+        } catch (error) {
+          console.error("Failed to draw media sticker:", error);
+        }
+      } else if (sticker.emoji) {
+        ctx.font = `${size}px serif`;
+        ctx.fillText(sticker.emoji, 0, 0);
+      }
+
       ctx.restore();
-    });
+    }
 
     // Convert to blob
     const storyText = textOverlays.map((overlay) => overlay.text).join(" ");
@@ -503,7 +593,13 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
         <div 
           ref={containerRef}
           className={`relative w-full max-w-[400px] aspect-[9/16] bg-black rounded-lg overflow-hidden ${activeTab === "draw" ? "cursor-none" : ""}`}
-          onMouseDown={activeTab === "draw" ? handleDrawStart : undefined}
+          onMouseDown={(e) => {
+            if (activeTab === "draw") {
+              handleDrawStart(e);
+              return;
+            }
+            setSelectedStickerId(null);
+          }}
           onMouseMove={handleDrawMove}
           onMouseUp={activeTab === "draw" ? handleDrawEnd : undefined}
           onMouseLeave={activeTab === "draw" ? handleDrawEnd : undefined}
@@ -563,22 +659,62 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
           ))}
 
           {/* Sticker overlays */}
-          {stickerOverlays.map(sticker => (
-            <div
-              key={sticker.id}
-              className="absolute cursor-move select-none"
-              style={{
-                left: `${sticker.x}%`,
-                top: `${sticker.y}%`,
-                transform: `translate(-50%, -50%) rotate(${sticker.rotation}deg)`,
-                fontSize: `${sticker.size}px`
-              }}
-              onMouseDown={(e) => handleMouseDown(e, "sticker", sticker.id)}
-              onDoubleClick={() => deleteStickerOverlay(sticker.id)}
-            >
-              {sticker.emoji}
-            </div>
-          ))}
+          {stickerOverlays.map(sticker => {
+            const isSelected = selectedStickerId === sticker.id;
+            return (
+              <div
+                key={sticker.id}
+                className={`absolute select-none ${isSelected ? "z-40" : "z-20"}`}
+                style={{
+                  left: `${sticker.x}%`,
+                  top: `${sticker.y}%`,
+                  transform: `translate(-50%, -50%) rotate(${sticker.rotation}deg)`
+                }}
+                onMouseDown={(e) => handleMouseDown(e, "sticker", sticker.id)}
+                onDoubleClick={() => deleteStickerOverlay(sticker.id)}
+              >
+                {sticker.kind === "media" && sticker.mediaUrl ? (
+                  <img
+                    src={sticker.mediaUrl}
+                    alt={sticker.mediaTitle || "Sticker"}
+                    className="cursor-move rounded-lg object-cover"
+                    style={{ width: `${sticker.size}px`, height: `${sticker.size}px` }}
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="cursor-move leading-none" style={{ fontSize: `${sticker.size}px` }}>
+                    {sticker.emoji}
+                  </div>
+                )}
+
+                {isSelected && (
+                  <>
+                    <div
+                      className="pointer-events-none absolute left-1/2 top-1/2 -z-10 rounded-lg border-2 border-white/80"
+                      style={{
+                        width: `${sticker.size + 16}px`,
+                        height: `${sticker.size + 16}px`,
+                        transform: "translate(-50%, -50%)"
+                      }}
+                    />
+                    {[
+                      "-left-3 -top-3",
+                      "-right-3 -top-3",
+                      "-left-3 -bottom-3",
+                      "-right-3 -bottom-3",
+                    ].map((positionClass, index) => (
+                      <button
+                        key={`${sticker.id}-handle-${index}`}
+                        type="button"
+                        className={`absolute h-5 w-5 rounded-full border-2 border-white bg-blue-500 ${positionClass}`}
+                        onMouseDown={(e) => handleStickerResizeStart(e, sticker.id)}
+                      />
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })}
 
           {/* Draw cursor indicator */}
           {activeTab === "draw" && (
@@ -634,7 +770,7 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
 
       {/* Tool Panels */}
       {activeTab && (
-        <div className="bg-zinc-900 p-4 max-h-[300px] overflow-y-auto">
+        <div className={`bg-zinc-900 p-4 max-h-[300px] ${(activeTab === "text" || activeTab === "stickers") ? "overflow-visible" : "overflow-y-auto"}`}>
           {/* Filters Panel */}
           {activeTab === "filters" && (
             <div className="flex gap-3 overflow-x-auto pb-2">
@@ -664,12 +800,12 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
           {/* Text Panel */}
           {activeTab === "text" && (
             <div className="space-y-4">
-              <div className="flex gap-2">
+              <div className="relative z-[90] flex gap-2">
                 <MentionInput
                   value={newText}
                   onChange={(val) => setNewText(val)}
                   placeholder="Type your text or @mention..."
-                  className="flex-1 bg-zinc-800 border-zinc-700 text-white"
+                  className="relative z-[90] flex-1 bg-zinc-800 border-zinc-700 text-white"
                   onKeyPress={(e) => e.key === "Enter" && addTextOverlay()}
                 />
                 <Button onClick={addTextOverlay} disabled={!newText.trim()}>
@@ -774,16 +910,37 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
 
           {/* Stickers Panel */}
           {activeTab === "stickers" && (
-            <div className="grid grid-cols-8 gap-2">
-              {STICKERS.map((emoji, index) => (
-                <button
-                  key={index}
-                  onClick={() => addStickerOverlay(emoji)}
-                  className="text-3xl p-2 hover:bg-zinc-800 rounded transition-colors"
+            <div className="space-y-3">
+              <div className="grid grid-cols-8 gap-2">
+                {STICKERS.map((emoji, index) => (
+                  <button
+                    key={index}
+                    onClick={() => addStickerOverlay(emoji)}
+                    className="text-3xl p-2 hover:bg-zinc-800 rounded transition-colors"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative">
+                <Button
+                  type="button"
+                  variant={showGifPicker ? "secondary" : "outline"}
+                  className="w-full"
+                  onClick={() => setShowGifPicker((prev) => !prev)}
                 >
-                  {emoji}
-                </button>
-              ))}
+                  {showGifPicker ? "Close GIFs" : "Add GIF / Sticker"}
+                </Button>
+
+                {showGifPicker && (
+                  <GifPicker
+                    apiKey={giphyApiKey}
+                    onSelect={addGifStickerOverlay}
+                    onClose={() => setShowGifPicker(false)}
+                  />
+                )}
+              </div>
             </div>
           )}
 
@@ -850,3 +1007,21 @@ export function StoryEditor({ file, previewUrl, onSave, onCancel }: StoryEditorP
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
