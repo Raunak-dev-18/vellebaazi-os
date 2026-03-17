@@ -492,11 +492,11 @@ export default function Home() {
     user?.displayName || user?.email?.split("@")[0] || "user";
 
   return (
-    <div className="mx-auto flex w-full max-w-[1240px] justify-center gap-8 px-0 text-foreground md:px-4 lg:px-8">
+    <div className="mx-auto flex w-full max-w-[1215px] justify-center gap-7 px-0 text-foreground md:px-4 lg:px-6">
       {/* Main Feed */}
-      <div className="w-full max-w-[630px] flex-1 lg:ml-2">
+      <div className="w-full max-w-[630px] flex-1">
         <Stories />
-        <div className="px-2 py-4 md:px-3 md:py-5">
+        <div className="px-1 py-4 sm:px-2 md:py-5">
           {loadingPosts ? (
             <div className="space-y-6">
               {[...Array(3)].map((_, i) => (
@@ -566,10 +566,10 @@ export default function Home() {
       </div>
 
       {/* Right Sidebar - Suggested Users */}
-      <div className="hidden w-[320px] shrink-0 pt-9 lg:block">
-        <div className="sticky top-9">
+      <div className="hidden w-[318px] shrink-0 pt-8 lg:block">
+        <div className="sticky top-8">
           {/* Current User */}
-          <div className="mb-6 flex items-center gap-3">
+          <div className="mb-6 flex items-center gap-3.5">
             <Avatar
               className="h-14 w-14 cursor-pointer"
               onClick={() => navigate("/profile")}
@@ -595,7 +595,7 @@ export default function Home() {
             </div>
             <Button
               variant="ghost"
-              className="h-auto p-0 text-xs font-semibold text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300"
+              className="h-auto p-0 text-xs font-semibold text-[#0095f6] hover:text-[#1877f2] dark:text-[#4ea8ff] dark:hover:text-[#75bcff]"
               onClick={() => navigate("/profile")}
             >
               Switch
@@ -605,7 +605,7 @@ export default function Home() {
           {/* Suggested Users Section */}
           <div className="mb-4">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground/75 dark:text-foreground/70">
+              <h2 className="text-sm font-semibold text-muted-foreground">
                 Suggested for you
               </h2>
               <Button
@@ -659,7 +659,7 @@ export default function Home() {
                     </div>
                     <Button
                       variant="ghost"
-                      className="h-auto p-0 text-xs font-semibold text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300"
+                      className="h-auto p-0 text-xs font-semibold text-[#0095f6] hover:text-[#1877f2] dark:text-[#4ea8ff] dark:hover:text-[#75bcff]"
                       onClick={() => handleFollow(suggestedUser)}
                       disabled={followLoading.has(suggestedUser.uid)}
                     >

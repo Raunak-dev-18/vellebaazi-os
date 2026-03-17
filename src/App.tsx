@@ -112,10 +112,10 @@ function AppContent() {
             <ProtectedRoute>
               <SidebarProvider>
                 <div className="flex min-h-screen w-full overflow-x-hidden bg-background">
-                  <div className="hidden md:block">
+                  <div className="fixed inset-y-0 left-0 z-40 hidden md:block">
                     <AppSidebar />
                   </div>
-                  <main className="relative flex min-h-screen flex-1 flex-col overflow-x-hidden">
+                  <main className="relative flex min-h-screen flex-1 flex-col overflow-x-hidden md:ml-[74px]">
                     <MobileTopBar />
                     <Suspense fallback={<PageLoader />}>
                       <div className={cn("flex-1 md:pb-0", hideMobileBottomNav ? "pb-0" : "pb-20")}>

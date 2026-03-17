@@ -187,6 +187,8 @@ const QUICK_REACTIONS = [
   "\u{1F976}",
   "\u{1F624}",
 ];
+const EMOJI_FONT_STACK =
+  '"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji",sans-serif';
 
 const timeAgo = (value: string) => {
   if (!value) return "";
@@ -2329,6 +2331,7 @@ export default function Bakaiti() {
                                     ? "border-primary bg-primary/10"
                                     : "border-border bg-background/80",
                                 )}
+                                style={{ fontFamily: EMOJI_FONT_STACK }}
                               >
                                 {reaction.emoji} {reaction.count}
                               </button>
@@ -2479,6 +2482,7 @@ export default function Bakaiti() {
                 type="button"
                 variant="outline"
                 className="h-9 w-9 p-0 text-lg"
+                style={{ fontFamily: EMOJI_FONT_STACK }}
                 onClick={() => {
                   if (!reactionTargetMessage) return;
                   handleReactToMessage(reactionTargetMessage, emoji).finally(() => {
@@ -2497,6 +2501,7 @@ export default function Bakaiti() {
               value={reactionInput}
               onChange={(e) => setReactionInput(e.target.value)}
               placeholder="Type or paste any emoji"
+              style={{ fontFamily: EMOJI_FONT_STACK }}
             />
             <Button
               type="button"

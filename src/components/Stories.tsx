@@ -1162,9 +1162,9 @@ export function Stories({
     <>
       {!viewerOnly && (
         <>
-          <div className="border-b border-border bg-card">
+          <div className="border-b border-border/80 bg-background">
         <ScrollArea className="w-full whitespace-nowrap">
-          <div className="flex gap-4 p-4">
+          <div className="flex gap-3 px-3 py-4 sm:gap-4 sm:px-4">
             {/* Your Story */}
             {user && (
               <div
@@ -1185,7 +1185,7 @@ export function Stories({
                   }`}
                 >
                   <div className="p-[3px] bg-background rounded-full relative">
-                    <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
+                    <Avatar className="h-14 w-14 transition-transform group-hover:scale-105 sm:h-16 sm:w-16">
                       <AvatarImage
                         src={getSafeAvatarUrl(user.photoURL, user.uid)}
                         alt="Your story"
@@ -1195,13 +1195,13 @@ export function Stories({
                       </AvatarFallback>
                     </Avatar>
                     {!hasOwnStory && (
-                      <div className="absolute bottom-0 right-0 bg-blue-500 rounded-full p-1">
-                        <Plus className="h-3 w-3 text-white" />
+                      <div className="absolute bottom-0 right-0 rounded-full border border-background bg-[#0095f6] p-1">
+                        <Plus className="h-2.5 w-2.5 text-white sm:h-3 sm:w-3" />
                       </div>
                     )}
                   </div>
                 </div>
-                <span className="text-xs max-w-[70px] truncate text-foreground">
+                <span className="max-w-[74px] truncate text-[11px] text-foreground">
                   Your story
                 </span>
               </div>
@@ -1225,8 +1225,8 @@ export function Stories({
                           : "bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500"
                       }`}
                     >
-                      <div className="p-[3px] bg-background rounded-full">
-                        <Avatar className="h-16 w-16 transition-transform group-hover:scale-105">
+                      <div className="rounded-full bg-background p-[2.5px]">
+                        <Avatar className="h-14 w-14 transition-transform group-hover:scale-105 sm:h-16 sm:w-16">
                           <AvatarImage
                             src={getSafeAvatarUrl(
                               latestStory.userAvatar,
@@ -1240,7 +1240,7 @@ export function Stories({
                         </Avatar>
                       </div>
                     </div>
-                    <span className="text-xs max-w-[70px] truncate text-foreground">
+                    <span className="max-w-[74px] truncate text-[11px] text-foreground">
                       {latestStory.username}
                     </span>
                   </div>

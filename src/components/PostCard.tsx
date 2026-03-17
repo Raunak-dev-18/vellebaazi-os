@@ -3,6 +3,7 @@ import {
   MessageCircle,
   Send,
   Bookmark,
+  MoreHorizontal,
   Volume2,
   VolumeX,
   Smile,
@@ -609,9 +610,9 @@ export function PostCard({
 
 
   return (
-    <div className="border border-border rounded-lg bg-card mb-6">
+    <div className="mx-auto mb-6 overflow-hidden rounded-xl border border-border/70 bg-card shadow-[0_1px_0_hsl(var(--border))]">
       {/* Header */}
-      <div className="flex items-center gap-3 p-4">
+      <div className="flex items-center gap-3 px-3 py-3.5">
         <Avatar className="h-10 w-10">
           <AvatarImage
             src={getSafeAvatarUrl(avatar, username)}
@@ -619,16 +620,16 @@ export function PostCard({
           />
           <AvatarFallback>{username[0].toUpperCase()}</AvatarFallback>
         </Avatar>
-        <div className="flex-1">
-          <p className="font-semibold text-sm">{username}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold leading-tight">{username}</p>
         </div>
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-          <span className="text-xl">•••</span>
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full p-0">
+          <MoreHorizontal className="h-5 w-5" />
         </Button>
       </div>
 
       {/* Image/Video */}
-      <div className="w-full bg-muted relative flex items-center justify-center overflow-hidden max-h-[75vh]">
+      <div className="relative flex max-h-[78vh] w-full items-center justify-center overflow-hidden bg-black">
         {image && !mediaError && !isBlockedMediaUrl ? (
           isVideoUrl(image) ? (
             <div
@@ -688,55 +689,55 @@ export function PostCard({
       </div>
 
       {/* Actions */}
-      <div className="p-4">
-        <div className="flex items-center gap-4 mb-3">
+      <div className="px-3 pb-3 pt-2.5">
+        <div className="mb-2.5 flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 ${isLiked ? "text-red-500" : "hover:text-red-500"}`}
+            className={`h-9 w-9 rounded-full ${isLiked ? "text-red-500" : "hover:text-red-500"}`}
             onClick={handleLike}
           >
-            <Heart className={`h-6 w-6 ${isLiked ? "fill-current" : ""}`} />
+            <Heart className={`h-[1.35rem] w-[1.35rem] ${isLiked ? "fill-current" : ""}`} />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9 rounded-full"
             onClick={() => setShowComments(!showComments)}
           >
-            <MessageCircle className="h-6 w-6" />
+            <MessageCircle className="h-[1.35rem] w-[1.35rem]" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9 rounded-full"
             onClick={() => setShareOpen(true)}
           >
-            <Send className="h-6 w-6" />
+            <Send className="h-[1.35rem] w-[1.35rem]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 ml-auto">
-            <Bookmark className="h-6 w-6" />
+          <Button variant="ghost" size="icon" className="ml-auto h-9 w-9 rounded-full">
+            <Bookmark className="h-[1.35rem] w-[1.35rem]" />
           </Button>
         </div>
 
         {/* Likes */}
         <p
-          className={`font-semibold text-sm mb-2 ${likesCount > 0 ? "cursor-pointer hover:text-muted-foreground" : ""}`}
+          className={`mb-1 text-sm font-semibold ${likesCount > 0 ? "cursor-pointer hover:text-muted-foreground" : ""}`}
           onClick={handleShowLikes}
         >
           {likesCount.toLocaleString()} {likesCount === 1 ? "like" : "likes"}
         </p>
 
         {/* Caption */}
-        <p className="text-sm">
-          <span className="font-semibold mr-2">{username}</span>
+        <p className="text-sm leading-5">
+          <span className="mr-2 font-semibold">{username}</span>
           <MentionText text={caption} />
         </p>
 
         {/* View Comments */}
         {comments.length > 0 && !showComments && (
           <button
-            className="text-sm text-muted-foreground mt-2 hover:text-foreground"
+            className="mt-1.5 text-sm text-muted-foreground hover:text-foreground"
             onClick={() => setShowComments(true)}
           >
             View all {comments.length} comments
@@ -745,7 +746,7 @@ export function PostCard({
 
         {/* Comments Section */}
         {showComments && (
-          <div className="mt-3 space-y-3 max-h-80 overflow-y-auto">
+          <div className="mt-2.5 max-h-80 space-y-3 overflow-y-auto">
             {comments.map((commentItem) => (
               <div key={commentItem.id} className="space-y-2">
                 {/* Main Comment */}
@@ -936,10 +937,12 @@ export function PostCard({
         )}
 
         {/* Time */}
-        <p className="text-xs text-muted-foreground mt-2">{timeAgo}</p>
+        <p className="mt-2 text-[11px] uppercase tracking-[0.02em] text-muted-foreground">
+          {timeAgo}
+        </p>
 
         {/* Add Comment */}
-        <div className="mt-3 pt-3 border-t border-border">
+        <div className="mt-2.5 border-t border-border/80 pt-2.5">
           {replyingTo && (
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-xs text-muted-foreground">
@@ -987,7 +990,7 @@ export function PostCard({
               </Button>
             </div>
           )}
-          <form onSubmit={handleComment} className="relative flex items-center gap-2">
+          <form onSubmit={handleComment} className="relative flex items-center gap-1.5">
             {showStickerPicker && (
               <GifPicker
                 apiKey={giphyApiKey}
@@ -1002,7 +1005,7 @@ export function PostCard({
               type="button"
               variant={showStickerPicker ? "secondary" : "ghost"}
               size="icon"
-              className="h-8 w-8"
+              className="h-8 w-8 rounded-full"
               onClick={() => setShowStickerPicker((prev) => !prev)}
               disabled={isSubmitting}
             >
@@ -1017,7 +1020,7 @@ export function PostCard({
               }
               value={comment}
               onChange={(val) => setComment(val)}
-              className="flex-1 border-0 focus-visible:ring-0 px-0"
+              className="flex-1 border-0 px-0 text-[0.94rem] focus-visible:ring-0"
               disabled={isSubmitting}
             />
             <Button

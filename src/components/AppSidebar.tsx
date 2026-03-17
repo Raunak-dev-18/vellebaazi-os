@@ -14,7 +14,7 @@ const navItems = [
 ] as const;
 
 const iconButtonBase =
-  "group relative flex h-11 w-11 items-center justify-center rounded-2xl text-sidebar-foreground/90 transition-all duration-150 hover:scale-[1.04] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+  "group relative flex h-11 w-11 items-center justify-center rounded-xl text-sidebar-foreground/90 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
 export function AppSidebar() {
   const { unreadBakaiti, unreadNotifications } = useNavBadges();
@@ -27,14 +27,14 @@ export function AppSidebar() {
   };
 
   return (
-    <aside className="flex h-screen w-[78px] flex-col justify-between border-r border-sidebar-border/70 bg-sidebar px-3 py-4">
+    <aside className="flex h-screen w-[74px] flex-col justify-between border-r border-sidebar-border/70 bg-sidebar px-2.5 py-4">
       <div className="space-y-6">
         <div className="flex items-center justify-center">
           <NavLink
             to="/"
             end
             title="Velle Bazi"
-            className="flex h-11 w-11 items-center justify-center rounded-2xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+            className="flex h-11 w-11 items-center justify-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
             activeClassName="bg-sidebar-accent"
           >
             <img src="/logo.png" alt="Velle Bazi" className="h-6 w-6 rounded-md object-cover" />
