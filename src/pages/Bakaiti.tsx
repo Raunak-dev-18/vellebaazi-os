@@ -157,36 +157,35 @@ interface GroupMemberEntry {
 type FollowState = "self" | "none" | "following" | "requested";
 
 const QUICK_REACTIONS = [
-  "ðŸ‘",
-  "â¤ï¸",
-  "ðŸ˜‚",
-  "ðŸ˜®",
-  "ðŸ˜¢",
-  "ðŸ˜¡",
-  "ðŸ”¥",
-  "ðŸ‘",
-  "ðŸ™",
-  "ðŸŽ‰",
-  "ðŸ˜",
-  "ðŸ¤”",
-  "ðŸ¥³",
-  "ðŸ¤£",
-  "ðŸ˜Ž",
-  "ðŸ¤",
-  "ðŸ’¯",
-  "âœ¨",
-  "ðŸ‘€",
-  "ðŸ™Œ",
-  "ðŸ¤",
-  "ðŸ«¶",
-  "ðŸ˜´",
-  "ðŸ’€",
-  "ðŸ¤¯",
-  "ðŸ«¡",
-  "ðŸ¤—",
-  "ðŸ¤©",
-  "ðŸ¥¶",
-  "ðŸ˜¤",
+  "\u{1F44D}",
+  "\u2764\uFE0F",
+  "\u{1F602}",
+  "\u{1F62E}",
+  "\u{1F622}",
+  "\u{1F621}",
+  "\u{1F525}",
+  "\u{1F44F}",
+  "\u{1F64F}",
+  "\u{1F389}",
+  "\u{1F60D}",
+  "\u{1F914}",
+  "\u{1F973}",
+  "\u{1F923}",
+  "\u{1F60E}",
+  "\u{1F91D}",
+  "\u{1F4AF}",
+  "\u2728",
+  "\u{1F440}",
+  "\u{1F64C}",
+  "\u{1F90D}",
+  "\u{1FAF6}",
+  "\u{1F634}",
+  "\u{1F480}",
+  "\u{1F92F}",
+  "\u{1F917}",
+  "\u{1F929}",
+  "\u{1F976}",
+  "\u{1F624}",
 ];
 
 const timeAgo = (value: string) => {
@@ -238,6 +237,17 @@ const getHostLabelFromUrl = (value: string) => {
     return new URL(value).hostname.replace(/^www\./, "");
   } catch {
     return value;
+  }
+};
+
+const sanitizeHttpUrl = (value?: string | null) => {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
   }
 };
 
@@ -2048,6 +2058,13 @@ export default function Bakaiti() {
                           : "Message");
                   const messageUrl = extractFirstUrl(m.text || "");
                   const linkPreview = messageUrl ? linkPreviewsByUrl[messageUrl] : undefined;
+                  const safeAttachmentUrl = sanitizeHttpUrl(m.fileUrl);
+                  const safeSharedMediaUrl = sanitizeHttpUrl(m.sharedPost?.mediaUrl || null);
+                  const safePreviewHref = sanitizeHttpUrl(
+                    linkPreview?.canonicalUrl || linkPreview?.url || messageUrl || null,
+                  );
+                  const safePreviewImage = sanitizeHttpUrl(linkPreview?.image || null);
+                  const safePreviewFavicon = sanitizeHttpUrl(linkPreview?.favicon || null);
                   const previewHost =
                     (linkPreview?.siteName || (messageUrl ? getHostLabelFromUrl(messageUrl) : ""))
                       .toString()
@@ -2098,19 +2115,19 @@ export default function Bakaiti() {
                             </div>
                           )}
 
-                          {m.fileUrl && m.fileType?.startsWith("image/") && (
+                          {safeAttachmentUrl && m.fileType?.startsWith("image/") && (
                             <img
-                              src={m.fileUrl}
+                              src={safeAttachmentUrl}
                               alt={m.fileName || "Image"}
                               loading="lazy"
                               decoding="async"
                               className="mb-2 max-h-64 rounded-lg object-cover"
-                              onClick={() => setFullImage(m.fileUrl || null)}
+                              onClick={() => setFullImage(safeAttachmentUrl)}
                             />
                           )}
-                          {m.fileUrl && m.fileType && !m.fileType.startsWith("image/") && (
+                          {safeAttachmentUrl && m.fileType && !m.fileType.startsWith("image/") && (
                             <a
-                              href={m.fileUrl}
+                              href={safeAttachmentUrl}
                               target="_blank"
                               rel="noreferrer"
                               className="mb-1 block text-xs underline"
@@ -2135,22 +2152,28 @@ export default function Bakaiti() {
                                 </p>
                               </div>
                               <div className="flex gap-2 p-2">
-                                {m.sharedPost.mediaType === "video" ? (
-                                  <video
-                                    src={m.sharedPost.mediaUrl}
-                                    className="h-14 w-14 rounded-md object-cover"
-                                    muted
-                                    playsInline
-                                  />
+                                {safeSharedMediaUrl ? (
+                                  m.sharedPost.mediaType === "video" ? (
+                                    <video
+                                      src={safeSharedMediaUrl}
+                                      className="h-14 w-14 rounded-md object-cover"
+                                      muted
+                                      playsInline
+                                    />
+                                  ) : (
+                                    <img
+                                      src={safeSharedMediaUrl}
+                                      alt="Shared post"
+                                      loading="lazy"
+                                      decoding="async"
+                                      className="h-14 w-14 rounded-md object-cover"
+                                      onClick={() => setFullImage(safeSharedMediaUrl)}
+                                    />
+                                  )
                                 ) : (
-                                  <img
-                                    src={m.sharedPost.mediaUrl}
-                                    alt="Shared post"
-                                    loading="lazy"
-                                    decoding="async"
-                                    className="h-14 w-14 rounded-md object-cover"
-                                    onClick={() => setFullImage(m.sharedPost?.mediaUrl || null)}
-                                  />
+                                  <div className="flex h-14 w-14 items-center justify-center rounded-md border border-border/60 text-[10px] text-muted-foreground">
+                                    Media unavailable
+                                  </div>
                                 )}
                                 <div className="min-w-0">
                                   <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -2168,16 +2191,16 @@ export default function Bakaiti() {
                               <MentionText text={m.text} />
                             </p>
                           )}
-                          {messageUrl && linkPreview && (
+                          {messageUrl && linkPreview && safePreviewHref && (
                             <a
-                              href={linkPreview.canonicalUrl || linkPreview.url || messageUrl}
+                              href={safePreviewHref}
                               target="_blank"
                               rel="noreferrer"
                               className="mt-2 block overflow-hidden rounded-xl border border-border/60 bg-background/85"
                             >
-                              {linkPreview.image && (
+                              {safePreviewImage && (
                                 <img
-                                  src={linkPreview.image}
+                                  src={safePreviewImage}
                                   alt={linkPreview.title || previewHost || "Link preview"}
                                   loading="lazy"
                                   decoding="async"
@@ -2186,9 +2209,9 @@ export default function Bakaiti() {
                               )}
                               <div className="p-2">
                                 <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                  {linkPreview.favicon && (
+                                  {safePreviewFavicon && (
                                     <img
-                                      src={linkPreview.favicon}
+                                      src={safePreviewFavicon}
                                       alt="Site icon"
                                       loading="lazy"
                                       decoding="async"

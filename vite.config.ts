@@ -4,8 +4,25 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import express from "express";
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import multer from "multer";
+
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+
+interface LinkPreviewPayload {
+  url: string;
+  canonicalUrl: string;
+  siteName: string;
+  title: string;
+  description: string;
+  image: string | null;
+  favicon: string;
+}
+
+interface LinkPreviewCacheEntry {
+  expiresAt: number;
+  payload: LinkPreviewPayload;
+}
 
 const getErrorDetails = (error: unknown): string => {
   if (!(error instanceof Error)) return String(error);
@@ -99,6 +116,54 @@ const toAbsoluteUrl = (value: string, base: string) => {
   }
 };
 
+const getRequestIp = (req: Request) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "unknown";
+};
+
+const createIpRateLimiter = ({
+  maxRequests,
+  windowMs,
+}: {
+  maxRequests: number;
+  windowMs: number;
+}) => {
+  const hits = new Map<string, { windowStart: number; count: number }>();
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    const ip = getRequestIp(req);
+    const entry = hits.get(ip);
+
+    if (!entry || now - entry.windowStart > windowMs) {
+      hits.set(ip, { windowStart: now, count: 1 });
+      next();
+      return;
+    }
+
+    if (entry.count >= maxRequests) {
+      res.status(429).json({ error: "Too many requests. Please retry in a minute." });
+      return;
+    }
+
+    entry.count += 1;
+    hits.set(ip, entry);
+    next();
+  };
+};
+
+const fetchWithTimeout = async (url: string, timeoutMs: number, init: RequestInit = {}) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const isDisallowedPreviewHost = (hostname: string) => {
   const host = hostname.toLowerCase();
   if (!host) return true;
@@ -123,11 +188,60 @@ const isDisallowedPreviewHost = (hostname: string) => {
     if (nums[0] === 169 && nums[1] === 254) return true;
   }
 
-  if (host.includes(":") && (host.startsWith("fc") || host.startsWith("fd") || host === "::1")) {
+  if (
+    host.includes(":") &&
+    (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80") || host === "::1")
+  ) {
     return true;
   }
 
   return false;
+};
+
+const assertPreviewUrlAllowed = (candidate: URL) => {
+  if (!["http:", "https:"].includes(candidate.protocol)) {
+    throw new Error("Only http/https URLs are supported.");
+  }
+  if (candidate.username || candidate.password) {
+    throw new Error("URLs with embedded credentials are blocked.");
+  }
+  if (isDisallowedPreviewHost(candidate.hostname)) {
+    throw new Error("Preview blocked for local/private URLs.");
+  }
+};
+
+const fetchPreviewResponse = async (
+  startUrl: URL,
+  timeoutMs: number,
+  maxRedirects = 3,
+): Promise<{ response: globalThis.Response; finalUrl: URL }> => {
+  let current = new URL(startUrl.toString());
+
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    assertPreviewUrlAllowed(current);
+
+    const response = await fetchWithTimeout(current.toString(), timeoutMs, {
+      method: "GET",
+      redirect: "manual",
+      headers: {
+        "User-Agent": "VelleBaaziLinkPreview/1.0",
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+
+    if (!REDIRECT_STATUS_CODES.has(response.status)) {
+      return { response, finalUrl: current };
+    }
+
+    const location = response.headers.get("location");
+    if (!location) {
+      return { response, finalUrl: current };
+    }
+
+    current = new URL(location, current);
+  }
+
+  throw new Error("Too many redirects while fetching link preview.");
 };
 
 const createStorageProxy = (env: Record<string, string>) => {
@@ -136,6 +250,8 @@ const createStorageProxy = (env: Record<string, string>) => {
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024 },
   });
+  const previewRateLimiter = createIpRateLimiter({ maxRequests: 45, windowMs: 60_000 });
+  const previewCache = new Map<string, LinkPreviewCacheEntry>();
 
   const STORAGE_BASE_URL =
     env.STORAGE_API_BASE_URL ||
@@ -164,6 +280,7 @@ const createStorageProxy = (env: Record<string, string>) => {
   };
 
   app.use(express.json({ limit: "1mb" }));
+  app.use("/api/link-preview", previewRateLimiter);
 
   app.get("/api/link-preview", async (req: Request, res: Response) => {
     const rawUrl = Array.isArray(req.query.url) ? req.query.url[0] : req.query.url;
@@ -175,47 +292,52 @@ const createStorageProxy = (env: Record<string, string>) => {
     let targetUrl: URL;
     try {
       targetUrl = new URL(rawUrl.trim());
-    } catch {
-      res.status(400).json({ error: "Invalid URL." });
+      assertPreviewUrlAllowed(targetUrl);
+    } catch (error) {
+      res.status(400).json({ error: getErrorDetails(error) });
       return;
     }
 
-    if (!targetUrl.protocol || !["http:", "https:"].includes(targetUrl.protocol)) {
-      res.status(400).json({ error: "Only http/https URLs are supported." });
+    const cacheKey = targetUrl.toString();
+    const cached = previewCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.set("Cache-Control", "public, max-age=600");
+      res.status(200).json(cached.payload);
       return;
     }
 
-    if (isDisallowedPreviewHost(targetUrl.hostname)) {
-      res.status(400).json({ error: "Preview blocked for local/private URLs." });
-      return;
+    if (cached) {
+      previewCache.delete(cacheKey);
     }
 
     try {
-      const response = await fetch(targetUrl.toString(), {
-        method: "GET",
-        redirect: "follow",
-        headers: {
-          "User-Agent": "VelleBaaziLinkPreview/1.0",
-          Accept: "text/html,application/xhtml+xml",
-        },
-      });
+      const { response, finalUrl } = await fetchPreviewResponse(targetUrl, 6000, 3);
 
       if (!response.ok) {
         res.status(502).json({ error: `Unable to fetch URL (${response.status}).` });
         return;
       }
 
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.toLowerCase().includes("text/html")) {
-        res.status(200).json({
-          url: targetUrl.toString(),
-          canonicalUrl: targetUrl.toString(),
-          siteName: targetUrl.hostname.replace(/^www\./, ""),
-          title: targetUrl.hostname.replace(/^www\./, ""),
+      const contentLength = Number(response.headers.get("content-length") || "0");
+      if (Number.isFinite(contentLength) && contentLength > 1_500_000) {
+        res.status(413).json({ error: "Preview page is too large." });
+        return;
+      }
+
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("text/html")) {
+        const payload: LinkPreviewPayload = {
+          url: finalUrl.toString(),
+          canonicalUrl: finalUrl.toString(),
+          siteName: finalUrl.hostname.replace(/^www\./, ""),
+          title: finalUrl.hostname.replace(/^www\./, ""),
           description: "",
           image: null,
-          favicon: `${targetUrl.origin}/favicon.ico`,
-        });
+          favicon: `${finalUrl.origin}/favicon.ico`,
+        };
+        previewCache.set(cacheKey, { payload, expiresAt: Date.now() + 10 * 60_000 });
+        res.set("Cache-Control", "public, max-age=600");
+        res.status(200).json(payload);
         return;
       }
 
@@ -235,32 +357,36 @@ const createStorageProxy = (env: Record<string, string>) => {
       const faviconHref = extractLinkHref(html, "icon");
 
       const resolvedCanonical =
-        toAbsoluteUrl(ogUrl, targetUrl.toString()) ||
-        toAbsoluteUrl(canonicalHref, targetUrl.toString()) ||
-        targetUrl.toString();
+        toAbsoluteUrl(ogUrl, finalUrl.toString()) ||
+        toAbsoluteUrl(canonicalHref, finalUrl.toString()) ||
+        finalUrl.toString();
 
       const resolvedImage =
-        toAbsoluteUrl(ogImage, targetUrl.toString()) ||
-        toAbsoluteUrl(twitterImage, targetUrl.toString()) ||
+        toAbsoluteUrl(ogImage, finalUrl.toString()) ||
+        toAbsoluteUrl(twitterImage, finalUrl.toString()) ||
         null;
 
       const resolvedFavicon =
-        toAbsoluteUrl(faviconHref, targetUrl.toString()) || `${targetUrl.origin}/favicon.ico`;
+        toAbsoluteUrl(faviconHref, finalUrl.toString()) || `${finalUrl.origin}/favicon.ico`;
 
-      const siteName = (ogSiteName || targetUrl.hostname).replace(/^www\./, "");
+      const siteName = (ogSiteName || finalUrl.hostname).replace(/^www\./, "");
       const title =
-        ogTitle || twitterTitle || pageTitle || siteName || targetUrl.hostname.replace(/^www\./, "");
+        ogTitle || twitterTitle || pageTitle || siteName || finalUrl.hostname.replace(/^www\./, "");
       const description = ogDescription || twitterDescription || metaDescription || "";
 
-      res.status(200).json({
-        url: targetUrl.toString(),
+      const payload: LinkPreviewPayload = {
+        url: finalUrl.toString(),
         canonicalUrl: resolvedCanonical,
         siteName,
         title,
         description,
         image: resolvedImage,
         favicon: resolvedFavicon,
-      });
+      };
+
+      previewCache.set(cacheKey, { payload, expiresAt: Date.now() + 10 * 60_000 });
+      res.set("Cache-Control", "public, max-age=600");
+      res.status(200).json(payload);
     } catch (error) {
       const details = getErrorDetails(error);
       console.error("Link preview fetch failed:", details);

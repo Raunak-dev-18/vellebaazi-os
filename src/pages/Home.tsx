@@ -492,11 +492,11 @@ export default function Home() {
     user?.displayName || user?.email?.split("@")[0] || "user";
 
   return (
-    <div className="mx-auto flex w-full max-w-[1200px] justify-center gap-6 px-0 text-foreground md:px-4 lg:px-6">
+    <div className="mx-auto flex w-full max-w-[1240px] justify-center gap-8 px-0 text-foreground md:px-4 lg:px-8">
       {/* Main Feed */}
-      <div className="w-full max-w-[630px] flex-1">
+      <div className="w-full max-w-[630px] flex-1 lg:ml-2">
         <Stories />
-        <div className="px-3 py-4 md:px-4 md:py-6">
+        <div className="px-2 py-4 md:px-3 md:py-5">
           {loadingPosts ? (
             <div className="space-y-6">
               {[...Array(3)].map((_, i) => (
@@ -566,8 +566,8 @@ export default function Home() {
       </div>
 
       {/* Right Sidebar - Suggested Users */}
-      <div className="hidden w-80 shrink-0 pt-8 xl:block">
-        <div className="sticky top-8">
+      <div className="hidden w-[320px] shrink-0 pt-9 lg:block">
+        <div className="sticky top-9">
           {/* Current User */}
           <div className="mb-6 flex items-center gap-3">
             <Avatar
@@ -595,7 +595,7 @@ export default function Home() {
             </div>
             <Button
               variant="ghost"
-              className="h-auto p-0 text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+              className="h-auto p-0 text-xs font-semibold text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300"
               onClick={() => navigate("/profile")}
             >
               Switch
@@ -659,7 +659,7 @@ export default function Home() {
                     </div>
                     <Button
                       variant="ghost"
-                      className="h-auto p-0 text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+                      className="h-auto p-0 text-xs font-semibold text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300"
                       onClick={() => handleFollow(suggestedUser)}
                       disabled={followLoading.has(suggestedUser.uid)}
                     >

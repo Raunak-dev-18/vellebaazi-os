@@ -1,46 +1,24 @@
-import {
-  ChevronLeft,
-  ChevronRight,
-  Compass,
-  Film,
-  Heart,
-  Home,
-  MessageCircle,
-  PlusSquare,
-  Settings,
-  User,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Film, Heart, Home, Menu, MessageCircle, Plus, Search, Settings, User } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { cn } from "@/lib/utils";
 import { useNavBadges } from "@/hooks/useNavBadges";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@/components/ui/sidebar";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
-  { title: "Home", url: "/", icon: Home },
-  { title: "Explore", url: "/explore", icon: Compass },
+  { title: "Home", url: "/", icon: Home, end: true },
+  { title: "Search", url: "/explore", icon: Search },
   { title: "Timepass", url: "/timepass", icon: Film },
   { title: "Bakaiti", url: "/bakaiti", icon: MessageCircle },
   { title: "Notifications", url: "/notifications", icon: Heart },
-  { title: "Create", url: "/create", icon: PlusSquare },
-  { title: "Profile", url: "/profile", icon: User },
-];
+  { title: "Create", url: "/create", icon: Plus },
+] as const;
 
-const footerItems = [{ title: "Settings", url: "/settings", icon: Settings }];
+const iconButtonBase =
+  "group relative flex h-11 w-11 items-center justify-center rounded-2xl text-sidebar-foreground/90 transition-all duration-150 hover:scale-[1.04] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
 export function AppSidebar() {
-  const { state, toggleSidebar } = useSidebar();
   const { unreadBakaiti, unreadNotifications } = useNavBadges();
-  const isCollapsed = state === "collapsed";
+  const { user } = useAuth();
 
   const getBadgeCount = (title: string) => {
     if (title === "Bakaiti") return unreadBakaiti;
@@ -49,127 +27,85 @@ export function AppSidebar() {
   };
 
   return (
-    <div className="h-screen p-4">
-      <Sidebar
-        className={`${
-          isCollapsed ? "w-20" : "w-64"
-        } rounded-2xl border border-sidebar-border bg-sidebar shadow-sm transition-all duration-300`}
-        collapsible="icon"
-      >
-        <SidebarContent className="flex h-full flex-col bg-sidebar">
-          <SidebarGroup className="pt-4">
-            <div
-              className={`${
-                isCollapsed
-                  ? "flex justify-center px-1"
-                  : "flex items-center justify-between px-3"
-              } pb-4`}
-            >
-              <h1
-                className={`font-['Dancing_Script'] text-2xl text-sidebar-foreground transition-all ${
-                  isCollapsed ? "w-0 overflow-hidden opacity-0" : "opacity-100"
-                }`}
+    <aside className="flex h-screen w-[78px] flex-col justify-between border-r border-sidebar-border/70 bg-sidebar px-3 py-4">
+      <div className="space-y-6">
+        <div className="flex items-center justify-center">
+          <NavLink
+            to="/"
+            end
+            title="Velle Bazi"
+            className="flex h-11 w-11 items-center justify-center rounded-2xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+            activeClassName="bg-sidebar-accent"
+          >
+            <img src="/logo.png" alt="Velle Bazi" className="h-6 w-6 rounded-md object-cover" />
+          </NavLink>
+        </div>
+
+        <nav className="flex flex-col items-center gap-2">
+          {navItems.map((item) => {
+            const badgeCount = getBadgeCount(item.title);
+            return (
+              <NavLink
+                key={item.title}
+                to={item.url}
+                end={item.end}
+                title={item.title}
+                className={iconButtonBase}
+                activeClassName="bg-sidebar-accent text-sidebar-accent-foreground"
               >
-                Velle Bazi
-              </h1>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleSidebar}
-                className="h-8 w-8 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                aria-label="Toggle sidebar"
-              >
-                {isCollapsed ? (
-                  <ChevronRight className="h-4 w-4" />
-                ) : (
-                  <ChevronLeft className="h-4 w-4" />
+                <item.icon className="h-6 w-6" />
+                {badgeCount > 0 && (
+                  <span
+                    className={cn(
+                      "absolute -right-1 -top-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white",
+                    )}
+                  >
+                    {badgeCount > 99 ? "99+" : badgeCount}
+                  </span>
                 )}
-              </Button>
-            </div>
+              </NavLink>
+            );
+          })}
+        </nav>
+      </div>
 
-            <SidebarGroupContent>
-              <SidebarMenu className="space-y-1">
-                {navItems.map((item) => {
-                  const badgeCount = getBadgeCount(item.title);
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild>
-                        <NavLink
-                          to={item.url}
-                          end={item.url === "/"}
-                          className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
-                            isCollapsed
-                              ? "mx-auto w-12 justify-center px-0"
-                              : "mx-2 gap-3 px-3"
-                          }`}
-                          activeClassName="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
-                        >
-                          <span className="relative inline-flex shrink-0">
-                            <item.icon className="h-5 w-5 shrink-0" />
-                            {badgeCount > 0 && (
-                              <span
-                                className={cn(
-                                  "absolute -right-2 -top-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white",
-                                  isCollapsed && "-right-1.5 -top-1.5",
-                                )}
-                              >
-                                {badgeCount > 99 ? "99+" : badgeCount}
-                              </span>
-                            )}
-                          </span>
-                          <span
-                            className={`whitespace-nowrap text-sm transition-all ${
-                              isCollapsed
-                                ? "w-0 overflow-hidden opacity-0"
-                                : "opacity-100"
-                            }`}
-                          >
-                            {item.title}
-                          </span>
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+      <div className="space-y-2">
+        <NavLink
+          to="/settings"
+          title="Settings"
+          className={iconButtonBase}
+          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground"
+        >
+          <Settings className="h-6 w-6" />
+        </NavLink>
 
-          <SidebarGroup className="mt-auto pb-4">
-            <SidebarGroupContent>
-              <SidebarMenu className="space-y-1">
-                {footerItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild>
-                      <NavLink
-                        to={item.url}
-                        end
-                        className={`flex items-center rounded-lg py-3 text-sidebar-foreground/90 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground ${
-                          isCollapsed
-                            ? "mx-auto w-12 justify-center px-0"
-                            : "mx-2 gap-3 px-3"
-                        }`}
-                        activeClassName="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
-                      >
-                        <item.icon className="h-5 w-5 shrink-0" />
-                        <span
-                          className={`whitespace-nowrap text-sm transition-all ${
-                            isCollapsed
-                              ? "w-0 overflow-hidden opacity-0"
-                              : "opacity-100"
-                          }`}
-                        >
-                          {item.title}
-                        </span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
-    </div>
+        <button
+          type="button"
+          title="More"
+          className={cn(iconButtonBase, "cursor-default")}
+          aria-label="More"
+        >
+          <Menu className="h-6 w-6" />
+        </button>
+
+        <NavLink
+          to="/profile"
+          title="Profile"
+          className={iconButtonBase}
+          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground"
+        >
+          {user?.photoURL ? (
+            <img
+              src={user.photoURL}
+              alt="Profile"
+              className="h-7 w-7 rounded-full object-cover ring-1 ring-sidebar-border"
+            />
+          ) : (
+            <User className="h-6 w-6" />
+          )}
+        </NavLink>
+      </div>
+    </aside>
   );
 }
+
