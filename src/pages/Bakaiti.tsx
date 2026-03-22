@@ -14,6 +14,7 @@ import {
   Send,
   Smile,
   SmilePlus,
+  Trash2,
   UserMinus,
   UserPlus,
   Users,
@@ -1412,6 +1413,46 @@ export default function Bakaiti() {
     }
   };
 
+  const handleDeleteMessage = async (message: ChatMessage) => {
+    if (!user || !selectedConversation) return;
+
+    if (message.senderId !== user.uid) {
+      toast({
+        title: "Action not allowed",
+        description: "You can delete only your own messages.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (message.localOnly) {
+      setOptimisticMessages((prev) =>
+        prev.filter((entry) => !(entry.id === message.id && entry.clientNonce === message.clientNonce)),
+      );
+      return;
+    }
+
+    const basePath =
+      selectedConversation.type === "group"
+        ? `groupMessages/${selectedConversation.id}/${message.id}`
+        : `messages/${selectedConversation.id}/${message.id}`;
+
+    try {
+      await remove(ref(db, basePath));
+      toast({
+        title: "Deleted",
+        description: "Message deleted.",
+      });
+    } catch (error) {
+      console.error("Failed to delete message:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete message.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleReportMessage = (message: ChatMessage) => {
     toast({
       title: "Reported",
@@ -2077,13 +2118,19 @@ export default function Bakaiti() {
                       key={m.id}
                       className={cn("flex transition-all duration-150 motion-reduce:transition-none", isMine ? "justify-end" : "justify-start")}
                     >
-                      <div className="group max-w-[80%]">
-                        <div
-                          className={cn(
-                            "rounded-2xl px-3 py-2 shadow-sm transition-all duration-150 motion-reduce:transition-none",
-                            isMine ? "bg-primary text-primary-foreground" : "bg-secondary",
-                          )}
-                        >
+                      <div
+                        className={cn(
+                          "group flex max-w-[82%] items-end gap-1.5",
+                          isMine ? "flex-row" : "flex-row-reverse",
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <div
+                            className={cn(
+                              "rounded-2xl px-3 py-2 shadow-sm transition-all duration-150 motion-reduce:transition-none",
+                              isMine ? "bg-primary text-primary-foreground" : "bg-secondary",
+                            )}
+                          >
                           <div className="mb-1 flex items-start justify-between gap-2">
                             {m.forwardedFrom ? (
                               <p className="text-[10px] opacity-75">
@@ -2238,33 +2285,50 @@ export default function Bakaiti() {
                               Loading link preview...
                             </div>
                           )}
-                          <p className="mt-1 flex items-center gap-1 text-[10px] opacity-70">
-                            {m.localStatus === "sending" ? (
-                              <>
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Sending...
-                              </>
-                            ) : m.localStatus === "failed" ? (
-                              <span className="text-destructive">Failed</span>
-                            ) : m.localStatus === "sent" ? (
-                              "Done"
-                            ) : (
-                              timeAgo(m.timestamp)
-                            )}
-                          </p>
+                            <p className="mt-1 flex items-center gap-1 text-[10px] opacity-70">
+                              {m.localStatus === "sending" ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Sending...
+                                </>
+                              ) : m.localStatus === "failed" ? (
+                                <span className="text-destructive">Failed</span>
+                              ) : m.localStatus === "sent" ? (
+                                "Done"
+                              ) : (
+                                timeAgo(m.timestamp)
+                              )}
+                            </p>
+                          </div>
+
+                          {grouped.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1 px-1">
+                              {grouped.map((reaction) => (
+                                <button
+                                  key={`${m.id}-${reaction.emoji}`}
+                                  type="button"
+                                  onClick={() => handleReactToMessage(m, reaction.emoji)}
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-xs",
+                                    reaction.mine
+                                      ? "border-primary bg-primary/10"
+                                      : "border-border bg-background/80",
+                                  )}
+                                  style={{ fontFamily: EMOJI_FONT_STACK }}
+                                >
+                                  {reaction.emoji} {reaction.count}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
                         {!m.localOnly && (
-                          <div
-                            className={cn(
-                              "mt-1 flex items-center gap-1 px-1 transition-all duration-150 md:max-h-0 md:overflow-hidden md:opacity-0 md:pointer-events-none md:group-hover:max-h-8 md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:max-h-8 md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto",
-                              isMine ? "justify-end" : "justify-start",
-                            )}
-                          >
+                          <div className="mb-1 flex items-center gap-1 transition-all duration-150 md:pointer-events-none md:translate-y-1 md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:translate-y-0 md:group-hover:opacity-100 md:group-focus-within:pointer-events-auto md:group-focus-within:translate-y-0 md:group-focus-within:opacity-100">
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                              className="h-7 w-7 rounded-full opacity-85 transition-opacity hover:opacity-100"
                               onClick={() => {
                                 setReactionTargetId(m.id);
                                 setReactionInput("");
@@ -2275,7 +2339,7 @@ export default function Bakaiti() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                              className="h-7 w-7 rounded-full opacity-85 transition-opacity hover:opacity-100"
                               onClick={() => {
                                 setReplyTarget(m);
                               }}
@@ -2287,7 +2351,7 @@ export default function Bakaiti() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-7 w-7 rounded-full opacity-80 transition-opacity hover:opacity-100"
+                                  className="h-7 w-7 rounded-full opacity-85 transition-opacity hover:opacity-100"
                                 >
                                   <MoreVertical className="h-4 w-4" />
                                 </Button>
@@ -2306,6 +2370,15 @@ export default function Bakaiti() {
                                   <Copy className="mr-2 h-4 w-4" />
                                   Copy
                                 </DropdownMenuItem>
+                                {isMine && (
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => void handleDeleteMessage(m)}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuItem
                                   className="text-destructive focus:text-destructive"
                                   onClick={() => handleReportMessage(m)}
@@ -2315,27 +2388,6 @@ export default function Bakaiti() {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
-                          </div>
-                        )}
-
-                        {grouped.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1 px-1">
-                            {grouped.map((reaction) => (
-                              <button
-                                key={`${m.id}-${reaction.emoji}`}
-                                type="button"
-                                onClick={() => handleReactToMessage(m, reaction.emoji)}
-                                className={cn(
-                                  "rounded-full border px-2 py-0.5 text-xs",
-                                  reaction.mine
-                                    ? "border-primary bg-primary/10"
-                                    : "border-border bg-background/80",
-                                )}
-                                style={{ fontFamily: EMOJI_FONT_STACK }}
-                              >
-                                {reaction.emoji} {reaction.count}
-                              </button>
-                            ))}
                           </div>
                         )}
                       </div>
